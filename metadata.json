@@ -1,0 +1,11 @@
+{
+  "name": "CHAT GPR",
+  "description": "An intelligent multimodal AI assistant with Khmer & English intelligence, problem solving, Vision AI, automatic visual explanations (diagrams/flowcharts), image generation, and document analysis.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
