@@ -293,24 +293,48 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 
           {/* Web Search Sources Grounding */}
           {message.groundingSources && message.groundingSources.length > 0 && (
-            <div className="p-3 rounded-xl bg-[#171A21] border border-[#242933] space-y-2">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-[#818CF8]">
-                <Globe className="w-3.5 h-3.5" />
-                <span>ប្រភពព័ត៌មានពី Web Search / Sources:</span>
+            <div className="p-3.5 rounded-xl bg-[#141820] border border-[#2A3241] space-y-2.5 shadow-md animate-fadeIn">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-semibold text-[#818CF8] font-khmer">
+                  <div className="w-5 h-5 rounded-md bg-[#6366F1]/20 flex items-center justify-center text-[#818CF8]">
+                    <Globe className="w-3.5 h-3.5" />
+                  </div>
+                  <span>ប្រភពព័ត៌មានពី Google Search ({message.groundingSources.length})</span>
+                </div>
+                <span className="text-[10px] text-[#10B981] bg-[#10B981]/10 px-2 py-0.5 rounded-full border border-[#10B981]/20 font-medium">
+                  Real-time Data
+                </span>
               </div>
               <div className="flex flex-wrap gap-2">
-                {message.groundingSources.map((source, idx) => (
-                  <a
-                    key={idx}
-                    href={source.uri}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#1C2028] hover:bg-[#282E3A] border border-[#242933] text-[11px] text-[#CBD5E1] hover:text-white transition-colors max-w-xs truncate"
-                  >
-                    <ExternalLink className="w-3 h-3 text-[#64748B]" />
-                    <span className="truncate">{source.title || source.uri}</span>
-                  </a>
-                ))}
+                {message.groundingSources.map((source, idx) => {
+                  let hostname = "";
+                  try {
+                    hostname = new URL(source.uri).hostname.replace(/^www\./, "");
+                  } catch (e) {
+                    hostname = source.uri;
+                  }
+                  return (
+                    <a
+                      key={idx}
+                      href={source.uri}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#1C222E] hover:bg-[#252D3D] border border-[#2D3647] text-[11px] text-[#CBD5E1] hover:text-white transition-all max-w-[240px] truncate shadow-sm"
+                      title={source.title || source.uri}
+                    >
+                      <img
+                        src={`https://www.google.com/s2/favicons?domain=${hostname}&sz=32`}
+                        alt=""
+                        className="w-3.5 h-3.5 rounded flex-shrink-0 opacity-80 group-hover:opacity-100"
+                        onError={(e) => {
+                          (e.target as HTMLElement).style.display = "none";
+                        }}
+                      />
+                      <span className="truncate font-medium">{source.title || hostname}</span>
+                      <ExternalLink className="w-3 h-3 text-[#64748B] group-hover:text-[#818CF8] flex-shrink-0 ml-auto" />
+                    </a>
+                  );
+                })}
               </div>
             </div>
           )}

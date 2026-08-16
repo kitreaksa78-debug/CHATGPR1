@@ -11,11 +11,7 @@ import {
   Edit2,
   Settings,
   X,
-  Sparkles,
-  ChevronDown,
-  ChevronRight,
   Database,
-  Flame,
 } from "lucide-react";
 import { Conversation } from "../types.js";
 import { Logo } from "./Logo.js";
@@ -51,19 +47,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
-  const [showArchived, setShowArchived] = useState(false);
 
   const storageUsage = calculateStorageUsage();
 
-  // Filter conversations
+  // Filter active conversations
   const filtered = conversations.filter((c) => {
     const matchesSearch =
       c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.messages.some((m) => m.content.toLowerCase().includes(searchQuery.toLowerCase()));
 
-    if (showArchived) {
-      return matchesSearch && c.isArchived;
-    }
     return matchesSearch && !c.isArchived;
   });
 
@@ -162,7 +154,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* Recent Section */}
           <div className="space-y-1">
             <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-[#64748B] font-khmer">
-              <span>{showArchived ? "បានរក្សាទុក / Archived" : "ថ្មីៗ / Recent"}</span>
+              <span>ថ្មីៗ / Recent</span>
               <span className="text-[10px]">{filtered.length}</span>
             </div>
 
@@ -176,22 +168,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
 
-        {/* Archive Toggle & Settings Footer */}
-        <div className="p-3 border-t border-[#1E232E] bg-[#0E1015] space-y-2">
-          {/* Toggle Archived view */}
-          <button
-            onClick={() => setShowArchived(!showArchived)}
-            className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-[#171A21] hover:bg-[#1C2028] border border-[#242933] text-xs text-[#CBD5E1] font-khmer transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              <Archive className="w-3.5 h-3.5 text-[#818CF8]" />
-              <span>{showArchived ? "ត្រឡប់ទៅការសន្ទនាធម្មតា" : "មើលការសន្ទនាដែលបានទុក (Archived)"}</span>
-            </div>
-            {showArchived ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-          </button>
-
-          {/* Settings and Storage info */}
-          <div className="flex items-center justify-between pt-1">
+        {/* Settings Footer */}
+        <div className="p-3 border-t border-[#1E232E] bg-[#0E1015]">
+          <div className="flex items-center justify-between">
             <button
               onClick={onOpenSettings}
               className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-[#94A3B8] hover:text-white hover:bg-[#171A21] font-khmer transition-colors"

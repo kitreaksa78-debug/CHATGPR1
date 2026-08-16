@@ -40,7 +40,7 @@ export const GeneratedImage: React.FC<GeneratedImageProps> = ({
     if (navigator.share) {
       try {
         await navigator.share({
-          title: "CHAT GPR AI Generated Image",
+          title: "CHAT GPR Generated Image",
           text: image.prompt,
           url: window.location.href,
         });

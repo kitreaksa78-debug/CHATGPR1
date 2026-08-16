@@ -103,63 +103,63 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const getIcon = (name: string) => {
     switch (name) {
       case "Calculator":
-        return <Calculator className="w-5 h-5 text-[#EC4899]" />;
+        return <Calculator className="w-4 h-4 sm:w-5 sm:h-5 text-[#EC4899]" />;
       case "CloudSun":
-        return <CloudSun className="w-5 h-5 text-[#38BDF8]" />;
+        return <CloudSun className="w-4 h-4 sm:w-5 sm:h-5 text-[#38BDF8]" />;
       case "Layers":
-        return <Layers className="w-5 h-5 text-[#818CF8]" />;
+        return <Layers className="w-4 h-4 sm:w-5 sm:h-5 text-[#818CF8]" />;
       case "ImageIcon":
-        return <ImageIcon className="w-5 h-5 text-[#F43F5E]" />;
+        return <ImageIcon className="w-4 h-4 sm:w-5 sm:h-5 text-[#F43F5E]" />;
       case "Eye":
-        return <Eye className="w-5 h-5 text-[#A855F7]" />;
+        return <Eye className="w-4 h-4 sm:w-5 sm:h-5 text-[#A855F7]" />;
       case "Code":
-        return <Code className="w-5 h-5 text-[#10B981]" />;
+        return <Code className="w-4 h-4 sm:w-5 sm:h-5 text-[#10B981]" />;
       case "FileText":
-        return <FileText className="w-5 h-5 text-[#F59E0B]" />;
+        return <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-[#F59E0B]" />;
       case "Globe":
-        return <Globe className="w-5 h-5 text-[#6366F1]" />;
+        return <Globe className="w-4 h-4 sm:w-5 sm:h-5 text-[#6366F1]" />;
       default:
-        return <Sparkles className="w-5 h-5 text-[#818CF8]" />;
+        return <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-[#818CF8]" />;
     }
   };
 
   return (
-    <div className="flex-1 overflow-y-auto flex flex-col justify-between">
+    <div className="flex-1 overflow-y-auto flex flex-col min-h-0 w-full">
       {messages.length === 0 ? (
         /* Welcome Hero Screen */
-        <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8 max-w-4xl mx-auto w-full text-center my-auto animate-fadeIn">
+        <div className="flex-1 flex flex-col items-center justify-start sm:justify-center p-3 sm:p-6 max-w-4xl mx-auto w-full text-center my-auto animate-fadeIn overflow-y-auto">
           {/* Logo & Headline */}
-          <div className="flex flex-col items-center gap-3.5 mb-8">
-            <Logo size="xl" showText={false} />
-            <div className="space-y-1.5">
-              <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight font-sans">
+          <div className="flex flex-col items-center gap-2.5 sm:gap-3.5 mb-4 sm:mb-6 mt-2 sm:mt-0">
+            <Logo size="lg" showText={false} />
+            <div className="space-y-1 sm:space-y-1.5">
+              <h1 className="text-xl sm:text-3xl font-black text-white tracking-tight font-sans">
                 CHAT <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#818CF8] via-[#A78BFA] to-[#F472B6]">GPR</span>
               </h1>
-              <h2 className="text-lg sm:text-xl font-bold text-[#F8FAFC] font-khmer">
+              <h2 className="text-base sm:text-xl font-bold text-[#F8FAFC] font-khmer">
                 សួស្តី! ខ្ញុំជា CHAT GPR 👋
               </h2>
-              <p className="text-sm text-[#94A3B8] font-khmer max-w-lg mx-auto">
+              <p className="text-xs sm:text-sm text-[#94A3B8] font-khmer max-w-lg mx-auto px-2">
                 ជំនួយការ AI ឆ្លាតវៃដែលអាចដោះស្រាយលំហាត់ វិភាគរូបភាព បង្កើតរូបភាព និងបង្កើត <span className="text-[#818CF8] font-semibold">គំនូសតាងពន្យល់ស្វ័យប្រវត្តិ (Visual Explanations)</span>
               </p>
             </div>
           </div>
 
           {/* Quick Capability Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 w-full max-w-3xl text-left">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 w-full max-w-3xl text-left pb-3">
             {STARTER_PROMPTS.map((item) => (
               <button
                 key={item.id}
                 onClick={() => onSelectPrompt(item.promptKm)}
-                className="group relative p-4 rounded-2xl bg-[#14171E] hover:bg-[#171A21] border border-[#242933] hover:border-[#6366F1]/40 transition-all text-left shadow-lg hover:shadow-[#6366F1]/10 flex flex-col justify-between min-h-[115px]"
+                className="group relative p-3 sm:p-4 rounded-2xl bg-[#14171E] hover:bg-[#171A21] border border-[#242933] hover:border-[#6366F1]/40 transition-all text-left shadow-lg hover:shadow-[#6366F1]/10 flex flex-col justify-between"
               >
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <div className="p-2 rounded-xl bg-[#1C2028] border border-[#2D3545]">
+                    <div className="p-1.5 sm:p-2 rounded-xl bg-[#1C2028] border border-[#2D3545]">
                       {getIcon(item.icon)}
                     </div>
-                    <ArrowRight className="w-4 h-4 text-[#64748B] group-hover:text-white group-hover:translate-x-0.5 transition-all" />
+                    <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#64748B] group-hover:text-white group-hover:translate-x-0.5 transition-all" />
                   </div>
-                  <h3 className="font-semibold text-xs text-white font-khmer mb-1">
+                  <h3 className="font-semibold text-xs sm:text-sm text-white font-khmer mb-1">
                     {item.titleKm}
                   </h3>
                   <p className="text-[11px] text-[#94A3B8] font-khmer line-clamp-2 leading-relaxed">

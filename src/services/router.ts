@@ -235,7 +235,7 @@ export function routeUserRequest(
     };
   }
 
-  // 2. Vision analysis (User uploaded an image to analyze, e.g., "តើរូបនេះមានអ្វី?")
+  // 2. Vision analysis (if image attached)
   if (hasImage) {
     return {
       intent: 'vision',
@@ -285,8 +285,15 @@ export function routeUserRequest(
   const transIndicators = ['បកប្រែ', 'translate', 'meaning of', 'ខ្មែរទៅអង់គ្លេស', 'អង់គ្លេសទៅខ្មែរ'];
   const isTranslation = transIndicators.some(kw => lower.includes(kw));
 
-  // 8. Web search intent
-  const searchKeywords = ['news', 'latest', 'today', 'current', 'price', 'weather', 'stock', 'who won', 'ព័ត៌មាន', 'ថ្ងៃនេះ', 'តម្លៃ', 'អាកាសធាតុ'];
+  // 8. Enhanced Web search intent & real-time keywords
+  const searchKeywords = [
+    'news', 'latest', 'today', 'yesterday', 'current', 'price', 'weather', 'stock', 'who won', 'who is',
+    'score', 'live', 'upcoming', 'release date', 'recent', 'what happened', 'update', 'exchange rate',
+    'crypto', 'bitcoin', 'btc', 'gold price', 'search web', 'search google', 'look up', 'google',
+    'ព័ត៌មាន', 'ថ្ងៃនេះ', 'ម្សិលមិញ', 'សប្តាហ៍នេះ', 'ខែនេះ', 'ឆ្នាំនេះ', 'ឆ្នាំ២០២៦', 'ឆ្នាំ2026', 'ឆ្នាំ2025',
+    'តម្លៃ', 'អាកាសធាតុ', 'ផ្សារហ៊ុន', 'អត្រាប្តូរប្រាក់', 'តម្លៃមាស', 'តើអ្នកណាជា', 'តើនរណាជា',
+    'ពិន្ទុបាល់ទាត់', 'លទ្ធផល', 'កាលវិភាគ', 'ស្វែងរក', 'ស្រាវជ្រាវ', 'លើ google', 'តាម web'
+  ];
   const wantsSearch = webSearchEnabled || searchKeywords.some(kw => lower.includes(kw));
 
   let determinedIntent: IntentCategory = 'text';
@@ -295,8 +302,13 @@ export function routeUserRequest(
   else if (isTranslation) determinedIntent = 'translation';
   else if (wantsSearch) determinedIntent = 'search';
 
-  // System directive for Visual Explanation mode
-  let systemDirective = `Provide a helpful, precise, natural, and comprehensive response in the user's preferred language (${lang === 'km' ? 'Khmer' : 'English'}).`;
+  // System directive for Universal Multilingual & Visual Explanation mode
+  let systemDirective = `Provide a helpful, precise, natural, and comprehensive response. ALWAYS detect and match the exact language the user wrote in (Khmer, English, Chinese, Vietnamese, Thai, Japanese, Korean, French, Spanish, German, Arabic, etc.) with native fluency.`;
+
+  if (wantsSearch) {
+    systemDirective += `
+IMPORTANT: Real-time Google Search grounding is enabled. Use the Google Search tool to find up-to-date facts, current dates, real-time prices, live events, or breaking news, and provide clear, accurate, and concise real-time answers.`;
+  }
 
   if (visualAnalysis.wantsVisual) {
     systemDirective += `

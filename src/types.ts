@@ -45,7 +45,7 @@ export interface Attachment {
   type: string; // mimeType (e.g. 'image/png', 'application/pdf', 'text/plain')
   size: number;
   dataUrl: string; // base64 data url
-  base64Data: string; // raw base64 string
+  base64Data?: string; // raw base64 string
   previewUrl?: string;
   category: 'image' | 'document' | 'audio' | 'code';
 }

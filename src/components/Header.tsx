@@ -1,16 +1,9 @@
 import React, { useState } from "react";
 import {
   Menu,
-  Sparkles,
-  Globe,
-  EyeOff,
+  SquarePen,
   Download,
   Trash2,
-  Settings,
-  Plus,
-  Share2,
-  ChevronDown,
-  Check,
 } from "lucide-react";
 import { Conversation } from "../types.js";
 import { Logo } from "./Logo.js";
@@ -19,46 +12,23 @@ import { exportAsMarkdown, exportAsJson, exportAsText } from "../utils/export.js
 interface HeaderProps {
   onToggleSidebar: () => void;
   currentConversation: Conversation | null;
-  webSearchEnabled: boolean;
-  onToggleWebSearch: () => void;
-  isTemporary: boolean;
-  onToggleTemporary: () => void;
+  webSearchEnabled?: boolean;
+  onToggleWebSearch?: () => void;
+  isTemporary?: boolean;
+  onToggleTemporary?: () => void;
   onNewChat: () => void;
-  onClearCurrentChat: () => void;
-  onOpenSettings: () => void;
+  onClearCurrentChat?: () => void;
+  onOpenSettings?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   onToggleSidebar,
   currentConversation,
-  webSearchEnabled,
-  onToggleWebSearch,
   isTemporary,
-  onToggleTemporary,
   onNewChat,
   onClearCurrentChat,
-  onOpenSettings,
 }) => {
   const [showExportMenu, setShowExportMenu] = useState(false);
-  const [copiedLink, setCopiedLink] = useState(false);
-
-  const handleShareApp = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: "CHAT GPR - Multimodal AI Assistant",
-          text: "Intelligent AI assistant supporting Khmer, Vision AI, image generation & problem solving.",
-          url: window.location.href,
-        });
-      } catch (e) {
-        console.log("Share cancelled", e);
-      }
-    } else {
-      await navigator.clipboard.writeText(window.location.href);
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2000);
-    }
-  };
 
   return (
     <header className="h-14 sm:h-16 px-3 sm:px-6 bg-[#0E1015] border-b border-[#1E232E] flex items-center justify-between flex-shrink-0 z-30">
@@ -77,7 +47,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-sm sm:text-base text-white font-khmer truncate max-w-[140px] sm:max-w-xs">
+          <span className="font-semibold text-sm sm:text-base text-white font-khmer truncate max-w-[160px] sm:max-w-xs">
             {currentConversation?.title || "CHAT GPR"}
           </span>
 
@@ -96,35 +66,9 @@ export const Header: React.FC<HeaderProps> = ({
         <span className="text-[#64748B] text-[10px]">Multimodal</span>
       </div>
 
-      {/* Right controls */}
-      <div className="flex items-center gap-1 sm:gap-2">
-        {/* Web Search Toggle */}
-        <button
-          onClick={onToggleWebSearch}
-          className={`p-2 rounded-xl transition-colors ${
-            webSearchEnabled
-              ? "bg-[#6366F1]/20 text-[#818CF8] border border-[#6366F1]"
-              : "text-[#94A3B8] hover:text-white hover:bg-[#1C2028]"
-          }`}
-          title={webSearchEnabled ? "Web Search: Enabled" : "Web Search: Disabled"}
-        >
-          <Globe className="w-4 h-4" />
-        </button>
-
-        {/* Temporary / Incognito Chat */}
-        <button
-          onClick={onToggleTemporary}
-          className={`p-2 rounded-xl transition-colors ${
-            isTemporary
-              ? "bg-[#F59E0B]/20 text-[#FBBF24] border border-[#F59E0B]"
-              : "text-[#94A3B8] hover:text-white hover:bg-[#1C2028]"
-          }`}
-          title={isTemporary ? "Exit Temporary Chat" : "Start Temporary Chat (No history saved)"}
-        >
-          <EyeOff className="w-4 h-4" />
-        </button>
-
-        {/* Export Dropdown */}
+      {/* Right controls (Clean & Minimalist like ChatGPT) */}
+      <div className="flex items-center gap-1.5 sm:gap-2">
+        {/* Export Dropdown (only when there are messages) */}
         {currentConversation && currentConversation.messages.length > 0 && (
           <div className="relative">
             <button
@@ -178,8 +122,8 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         )}
 
-        {/* Clear Current Chat */}
-        {currentConversation && currentConversation.messages.length > 0 && (
+        {/* Clear Current Chat (only when there are messages) */}
+        {currentConversation && currentConversation.messages.length > 0 && onClearCurrentChat && (
           <button
             onClick={onClearCurrentChat}
             className="p-2 rounded-xl text-[#94A3B8] hover:text-[#EF4444] hover:bg-[#1C2028] transition-colors"
@@ -189,22 +133,13 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
-        {/* Share App Link */}
+        {/* New Chat Button */}
         <button
-          onClick={handleShareApp}
+          onClick={onNewChat}
           className="p-2 rounded-xl text-[#94A3B8] hover:text-white hover:bg-[#1C2028] transition-colors"
-          title="Share CHAT GPR"
+          title="New Chat"
         >
-          {copiedLink ? <Check className="w-4 h-4 text-green-400" /> : <Share2 className="w-4 h-4" />}
-        </button>
-
-        {/* Settings button */}
-        <button
-          onClick={onOpenSettings}
-          className="p-2 rounded-xl text-[#94A3B8] hover:text-white hover:bg-[#1C2028] transition-colors"
-          title="Settings"
-        >
-          <Settings className="w-4 h-4" />
+          <SquarePen className="w-4 h-4 sm:w-5 sm:h-5" />
         </button>
       </div>
     </header>

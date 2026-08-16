@@ -28,15 +28,18 @@ export function parseGeminiError(err: any): string {
 
   const combined = (rawMessage + " " + nestedMsg).toLowerCase();
 
-  // 1. Quota / Rate Limit (429 / RESOURCE_EXHAUSTED)
+  // 1. Quota / Rate Limit (429 / RESOURCE_EXHAUSTED) & High Demand (503 / UNAVAILABLE)
   if (
     combined.includes("429") ||
     combined.includes("resource_exhausted") ||
     combined.includes("quota") ||
     combined.includes("rate limit") ||
-    combined.includes("too many requests")
+    combined.includes("too many requests") ||
+    combined.includes("503") ||
+    combined.includes("high demand") ||
+    combined.includes("unavailable")
   ) {
-    return "⚠️ កូតាប្រើប្រាស់ Google Gemini API បានពេញបណ្ដោះអាសន្ន (Quota / Rate Limit Exceeded)។ សូមរង់ចាំប្រហែល ២០-៣០ វិនាទី រួចចុចប៊ូតុង 'ព្យាយាមម្តងទៀត / Retry'។\n\nGoogle Gemini API rate limit or quota exceeded. Please wait a moment and click Retry.";
+    return "⚠️ សេវាកម្ម Google Gemini API កំពុងមានចរាចរណ៍ខ្ពស់ ឬកូតាបានពេញបណ្ដោះអាសន្ន (High Demand / Rate Limit)។\nសូមរង់ចាំប្រហែល ២០-៣០ វិនាទី រួចចុចប៊ូតុង **'ព្យាយាមម្តងទៀត / Retry'** ខាងក្រោម។\n\nGoogle Gemini API is currently experiencing high demand or rate limits. Please wait a few moments and click Retry.";
   }
 
   // 2. Missing or Invalid API Key

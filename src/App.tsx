@@ -331,23 +331,25 @@ export default function App() {
         isStreaming: false,
       });
 
-      // Auto Title Generation if this was first message
+      // Auto Title Generation if this was first message (debounced to avoid burst rate limits)
       if (isFirstUserTurn && settings.autoTitle && !targetConv.isTemporary) {
-        fetch("/api/title", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt: text,
-            response: accumulatedContent || finalGeneratedImage?.prompt || "",
-          }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            if (data.title) {
-              handleRenameChat(targetConv!.id, data.title);
-            }
+        setTimeout(() => {
+          fetch("/api/title", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              prompt: text,
+              response: accumulatedContent || finalGeneratedImage?.prompt || "",
+            }),
           })
-          .catch((e) => console.warn("Failed to auto title", e));
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.title) {
+                handleRenameChat(targetConv!.id, data.title);
+              }
+            })
+            .catch((e) => console.warn("Failed to auto title", e));
+        }, 1500);
       }
     } catch (err: any) {
       if (err.name === "AbortError") {

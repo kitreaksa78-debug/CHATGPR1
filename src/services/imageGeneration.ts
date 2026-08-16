@@ -19,6 +19,7 @@ export interface GenerateImageResult {
 
 /**
  * Aspect ratio to dimensions mapping for ultra HD generation (1024-1536px)
+ * Compatible with Flux and high-resolution diffusion models
  */
 function getDimensionsForAspectRatio(ratio: string): { width: number; height: number } {
   switch (ratio) {
@@ -37,34 +38,81 @@ function getDimensionsForAspectRatio(ratio: string): { width: number; height: nu
 }
 
 /**
- * Ultra-high quality prompt expansion system designed to match ChatGPT / DALL-E 3 & Midjourney
+ * Determine the optimal aspect ratio based on user prompt semantics
+ */
+export function inferOptimalAspectRatio(prompt: string): "1:1" | "16:9" | "9:16" | "4:3" | "3:4" {
+  const lower = prompt.toLowerCase();
+  
+  // Portrait / Person / Wallpaper / Full-body
+  if (
+    lower.includes("portrait") ||
+    lower.includes("wallpaper") ||
+    lower.includes("phone") ||
+    lower.includes("មនុស្ស") ||
+    lower.includes("ប្រុស") ||
+    lower.includes("ស្រី") ||
+    lower.includes("ក្មេង") ||
+    lower.includes("boy") ||
+    lower.includes("girl") ||
+    lower.includes("man") ||
+    lower.includes("woman") ||
+    lower.includes("standing") ||
+    lower.includes("outfit") ||
+    lower.includes("ម៉ូដ") ||
+    lower.includes("person") ||
+    lower.includes("model")
+  ) {
+    return "3:4";
+  }
+
+  // Wide landscape / Wallpaper / Scenic / Panorama
+  if (
+    lower.includes("landscape") ||
+    lower.includes("panoram") ||
+    lower.includes("desktop") ||
+    lower.includes("cinema") ||
+    lower.includes("scenery") ||
+    lower.includes("ទេសភាព") ||
+    lower.includes("វាល") ||
+    lower.includes("ឆ្នេរ") ||
+    lower.includes("ភ្នំ")
+  ) {
+    return "16:9";
+  }
+
+  return "1:1";
+}
+
+/**
+ * Ultra-high quality prompt expansion system designed to match ChatGPT / DALL-E 3 & Midjourney v6
  */
 async function expandPromptForPhotorealism(userPrompt: string): Promise<string> {
   const ai = getGeminiClient();
   try {
     const translationRes = await ai.models.generateContent({
       model: "gemini-3.1-flash-lite",
-      contents: `You are an elite AI Art Director and prompt engineer equivalent to DALL-E 3 / Midjourney v6.
-Your job is to transform the user's prompt (which may be in Khmer, English, or mixed) into an ultra-detailed, award-winning, stunning visual prompt.
+      contents: `You are an elite AI Art Director and master prompt engineer equivalent to DALL-E 3 / Midjourney v6.
+Your job is to transform the user's prompt (which may be in Khmer, English, or mixed) into an ultra-detailed, award-winning, stunning visual prompt that produces museum-quality, breathtaking photorealism.
 
 User Request: "${userPrompt}"
 
 Instructions:
-1. Identify the core subject, setting, and mood.
-2. If the user mentions Khmer / Cambodian culture, people, or temples (like Angkor Wat, Bayon, Bokor, Apsara, traditional clothing):
-   - Authentically describe Khmer facial features (handsome/beautiful Southeast Asian features, warm golden skin tone, sharp expressive eyes).
-   - Accurately describe authentic Khmer attire (e.g. elegant silk shirt, traditional krama scarf, or royal sampot) with intricate embroidery.
-   - Describe majestic ancient Angkor sandstone architecture with carved lotus motifs, reflection in water pools, and morning/sunset golden light.
-3. Enhance with professional cinema & photography keywords:
-   - Camera & Lens: Shot on 85mm f/1.4 prime lens / Hasselblad medium format, ultra-sharp focus on subject, natural creamy background bokeh (depth of field).
-   - Lighting: Cinematic golden hour sunlight, soft volumetric crepuscular rays, warm ambient glow, natural subsurface scattering for skin.
-   - Detail: Masterpiece, 8k UHD resolution, hyper-detailed skin texture, realistic hair strands, authentic environment, high dynamic range (HDR), color graded.
-4. If it is an anime, 3D, or fantasy request, craft it with top-tier art style specifications (e.g. Makoto Shinkai aesthetic or Unreal Engine 5 render).
-5. Output ONLY the finalized prompt text. No explanations, no prefixes, no quotation marks.`,
+1. Deeply understand the core subject, emotional ambiance, cultural authenticity, and composition.
+2. If the user mentions Khmer / Cambodian culture, people, historical landmarks, or attire (e.g. Angkor Wat, Bayon, Bakheng, Apsara, traditional clothes, youth, man, woman):
+   - Authentically describe genuine Cambodian facial features (striking handsome/beautiful Southeast Asian bone structure, warm golden-bronze skin tone with natural texture and fine pores, expressive soulful brown eyes, well-groomed stylish hair).
+   - Accurately describe authentic Cambodian heritage attire: an elegant ivory/silk mandarin-collar shirt, a richly woven maroon or royal silk sampot chong kben (សំពត់ចងក្បិន) with an ornate antique golden metal buckle belt, and an authentic checkered Cambodian krama scarf (ក្រមា) draped symmetrically over the chest and shoulders.
+   - Meticulously describe the backdrop: iconic towering ancient sandstone spires of Angkor Wat bathed in warm sunrise or golden hour twilight, majestic sugar palm trees (ដើមត្នោត), and crystal-clear reflective water pools with lotus flowers.
+3. Master Photography & Cinema Aesthetics:
+   - Camera & Lens: Award-winning National Geographic portrait, shot on Hasselblad H6D-100c / Canon EOS R5 with 85mm f/1.4 prime lens, tack-sharp subject focus, smooth creamy optical background bokeh.
+   - Lighting: Gorgeous golden hour sunlight, soft volumetric god rays, natural warm ambient bounce light, realistic subsurface scattering on skin.
+   - Quality & Details: 8k UHD resolution, hyper-realistic, masterpiece, true-to-life cloth texture, intricate embroidery, high dynamic range (HDR), professional cinematic color grading.
+4. If the prompt is about another style (cyberpunk, fantasy, anime, 3D, product photography, nature):
+   - Render it with the highest aesthetic fidelity matching top-tier digital art or commercial photography.
+5. Output ONLY the finalized expanded English prompt text. No explanations, no prefixes, no quotation marks.`,
     });
 
     const enhanced = translationRes.text?.trim().replace(/^["']|["']$/g, "");
-    if (enhanced && enhanced.length > 15) {
+    if (enhanced && enhanced.length > 20) {
       return enhanced;
     }
   } catch (err) {
@@ -80,7 +128,7 @@ Instructions:
 export async function generateAIImage(options: GenerateImageOptions): Promise<GenerateImageResult> {
   const {
     prompt,
-    aspectRatio = "1:1",
+    aspectRatio = inferOptimalAspectRatio(prompt),
     inputImageBase64,
     inputImageMimeType = "image/png",
   } = options;
@@ -119,7 +167,7 @@ export async function generateAIImage(options: GenerateImageOptions): Promise<Ge
     // Imagen 3 quota limit on free tier; proceed seamlessly to next-gen Flux engine
   }
 
-  // 3. Try Next-Gen Flux.1 Photorealism Engine (Matches Midjourney v6 & DALL-E 3 quality)
+  // 3. Next-Gen Flux.1 Photorealism Engine Cascade (Matches Midjourney v6 & DALL-E 3 quality)
   const { width, height } = getDimensionsForAspectRatio(aspectRatio);
   const randomSeed = Math.floor(Math.random() * 9999999);
   const encodedPrompt = encodeURIComponent(enhancedPrompt);

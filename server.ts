@@ -28,7 +28,12 @@ app.get("/api/health", (req, res) => {
 
 // 1. Streaming Chat & Multimodal Routing Endpoint
 app.post("/api/chat/stream", async (req, res) => {
-  const { messages = [], prompt = "", attachments = [], webSearchEnabled = false } = req.body;
+  const { 
+    messages = [], 
+    prompt = "", 
+    attachments = [], 
+    webSearchEnabled = false 
+  } = req.body;
 
   if (!prompt && (!attachments || attachments.length === 0)) {
     return res.status(400).json({ error: "Prompt or attachment is required" });
@@ -52,27 +57,23 @@ app.post("/api/chat/stream", async (req, res) => {
   if (route.isImageGeneration) {
     try {
       res.write(`data: ${JSON.stringify({ type: "status", message: "កំពុងបង្កើតរូបភាព / Generating image..." })}\n\n`);
-      
-      const imageAttachment = attachments.find((a: any) => a.category === "image");
-      
+      const targetImagePrompt = route.cleanImagePrompt || prompt;
       const imageResult = await generateAIImage({
-        prompt: route.cleanImagePrompt || prompt,
-        aspectRatio: "1:1",
-        inputImageBase64: imageAttachment?.base64Data,
-        inputImageMimeType: imageAttachment?.type,
+        prompt: targetImagePrompt,
       });
 
       if (imageResult.success && imageResult.imageUrl) {
         res.write(`data: ${JSON.stringify({
           type: "image_gen_success",
           imageUrl: imageResult.imageUrl,
-          prompt: route.cleanImagePrompt || prompt,
+          prompt: targetImagePrompt,
           revisedPrompt: imageResult.revisedPrompt,
         })}\n\n`);
 
-        const replyText = route.language === "km" 
-          ? "បាន! ខ្ញុំបានបង្កើតរូបភាពឱ្យអ្នករួចរាល់ហើយ។"
-          : "Here is the image I generated for you.";
+        const isKhmer = route.language === "km";
+        const replyText = isKhmer 
+          ? "បាន! ខ្ញុំបានបង្កើតរូបភាពយ៉ាងស្រស់ស្អាតជូនអ្នករួចរាល់ហើយ។" 
+          : "Here is your generated image.";
         res.write(`data: ${JSON.stringify({ type: "token", text: replyText })}\n\n`);
       } else {
         res.write(`data: ${JSON.stringify({
@@ -112,23 +113,52 @@ app.post("/api/chat/stream", async (req, res) => {
       });
     }
 
-    // Construct system instruction
-    const baseSystemInstruction = `You are CHAT GPR, a world-class intelligent multimodal AI tutor and assistant.
-Core Directives:
-1. Automatically understand the user's intent and choose the clearest explanation method.
-2. If the user writes in Khmer (ខ្មែរ), respond naturally, politely, and fluently in Khmer.
-3. If the user writes in English, respond in fluent English. If mixed, match the user's style seamlessly.
-4. For mathematical, scientific, educational, or architectural concepts:
-   - Structure your response cleanly with clear section headings.
-   - For formulas, use LaTeX ($...$ inline or $$...$$ display).
-   - When explaining a concept that has a visual diagram, provide a clear text breakdown and explain each part step-by-step under '### ពន្យល់ពីរូបភាព'.
-5. For Vision analysis:
-   - Read all visible text (OCR) in Khmer and English accurately.
-   - Describe diagrams, charts, UI screenshots, code snippets, or photos meticulously.
-6. For Coding & Technical queries:
-   - Provide complete, modern, robust, runnable code with language tags in markdown blocks.
-7. NEVER return text-only image prompts or redirect users to Midjourney, Bing, DALL-E, or Canva.
-8. Be helpful, precise, authoritative, and authentic.`;
+    // Construct comprehensive ChatGPT-level system instruction
+    const currentYear = new Date().getFullYear();
+    const currentDateStr = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    const baseSystemInstruction = `You are CHAT GPR, a world-class, ultra-intelligent, friendly, and articulate AI conversational assistant and tutor modeled after the world's most advanced AI assistants (ChatGPT / GPT-4o).
+
+Knowledge & Real-time Context:
+- Current Year: ${currentYear}
+- Today's Date: ${currentDateStr}
+- Always be aware that the current year is ${currentYear}. Do NOT state that we are in 2024 or older years.
+
+Your mission is to deliver deeply insightful, exceptionally helpful, beautifully formatted, and natural conversational answers across all domains.
+
+### 🌟 Core Communication & Personality:
+1. **Conversational Excellence & Tone**:
+   - Speak with warmth, professional confidence, intelligence, clarity, and genuine empathy.
+   - Be direct: start with the immediate answer or solution, followed by clear explanations, structured breakdowns, real-world examples, and actionable advice.
+   - Avoid generic robotic filler or redundant disclaimers (e.g. do NOT say "As an AI model..."). Jump straight into the high-value answer.
+
+2. **Universal Multilingual Mastery (Support All World Languages)**:
+   - **Automatic Language Detection & Mirroring**: Always respond in the EXACT same language (or dialect) that the user asks in, unless explicitly requested to translate or answer in another language.
+   - **Flawless Global Fluency**: Native-level vocabulary, pristine grammar, natural idioms, and correct cultural nuances across all major world languages including:
+     - 🇰🇭 **Khmer (ភាសាខ្មែរ)**: Natural, highly fluent, grammatically pristine, and polite Khmer (ភាសាខ្មែររលូន គួរសម និងត្រឹមត្រូវតាមក្បួនខ្នាត)។
+     - 🇬🇧/🇺🇸 **English**: Articulate, precise, rich vocabulary, and crisp phrasing.
+     - 🇨🇳 **Chinese (中文 / 简体 / 繁體)**: Fluent Putonghua/Mandarin and Traditional Chinese with natural syntax and terminology.
+     - 🇻🇳 **Vietnamese (Tiếng Việt)**: Natural tone markers, proper honorifics, and accurate modern phrasing.
+     - 🇹🇭 **Thai (ภาษาไทย)**: Polite particles (ครับ/ค่ะ), natural sentence structure, and standard grammar.
+     - 🇯🇵 **Japanese (日本語)**: Natural keigo (丁寧語/尊敬語/謙譲語), kanji/kana usage, and respectful tone.
+     - 🇰🇷 **Korean (한국어)**: Natural honorific levels (해요체/하십시오체), accurate vocabulary, and standard grammar.
+     - 🇫🇷 **French (Français)**, 🇪🇸 **Spanish (Español)**, 🇩🇪 **German (Deutsch)**, 🇷🇺 **Russian (Русский)**, 🇸🇦 **Arabic (العربية)**, 🇮🇳 **Hindi (हिन्दी)**, 🇮🇩 **Indonesian (Bahasa Indonesia)**, 🇵🇭 **Tagalog/Filipino**, 🇲🇲 **Burmese (မြန်မာဘာသာ)**, 🇱🇦 **Lao (ພາສາລາວ)**, and every other regional or international language.
+   - **Seamless Code-Switching & Translation**: Effortlessly handle mixed languages (e.g. Khmer-English, Singlish, Spanglish) and provide high-accuracy translations preserving exact tone, context, and nuance.
+
+3. **Masterful Markdown Formatting**:
+   - Structure long explanations with clear hierarchical Markdown headers (\`##\`, \`###\`).
+   - Use scannable bullet points with bold keywords (\`- **ចំណុចសំខាន់៖** ...\`).
+   - Use comparison tables (\`| Header 1 | Header 2 |\`) when comparing options, frameworks, or concepts.
+   - Highlight key terms with **bold** or *italics* for effortless reading.
+
+4. **Domain Excellence**:
+   - 💻 **Coding & Software Engineering**: Provide clean, modular, production-ready code with language tags, type safety, best practices, step-by-step explanations of how it works, and common edge cases.
+   - 📐 **Math, Science & STEM**: Break down problems step-by-step with intuitive reasoning. Write mathematical formulas using proper LaTeX notation (\`$...$\` inline or \`$$...$$\` display blocks).
+   - 🔍 **Vision & Multimodal Analysis**: Carefully inspect attached images, read all visible Khmer & English text (OCR), describe diagrams, solve worksheets, and diagnose UI/code screenshots with precision.
+   - ✍️ **Writing, Business & Creativity**: Craft compelling essays, business proposals, professional emails, summaries, and creative stories with nuance and depth.
+   - 🌐 **Real-time Research**: Provide up-to-date, objective, and well-cited information when web search is enabled.
+
+5. **Visual Explanations & Diagrams**:
+   - When a concept is explained with an educational diagram or flowchart, provide a detailed textual breakdown explaining each component and stage step-by-step under '### ពន្យល់ពីរូបភាព'.`;
 
     // Format previous conversation history
     const contents: any[] = [];
@@ -173,12 +203,11 @@ Core Directives:
       config.tools = [{ googleSearch: {} }];
     }
 
-    // High availability model cascade with standard modern Gemini models
+    // High availability model cascade with ultra-reliable lite models prioritized for instant response
     const TEXT_MODELS = [
       "gemini-3.1-flash-lite",
-      "gemini-3.7-flash",
-      "gemini-3.1-pro-preview",
       "gemini-flash-latest",
+      "gemini-3.7-flash",
     ];
 
     let streamCompleted = false;
@@ -220,11 +249,39 @@ Core Directives:
         streamCompleted = true;
         break;
       } catch (err: any) {
-        console.warn(`[CHAT GPR] Model ${modelName} stream attempt failed:`, err?.message || err);
+        console.warn(`[CHAT GPR] Model ${modelName} stream failed:`, err?.message || err);
         lastError = err;
 
         if (fullText.length > 0) {
+          streamCompleted = true;
           break;
+        }
+
+        // If grounding failed on this model, attempt without grounding tool immediately
+        if (config.tools && config.tools.length > 0) {
+          try {
+            console.log("[CHAT GPR] Retrying without tools for", modelName);
+            const fallbackConfig = { ...config, tools: undefined };
+            const responseStream = await ai.models.generateContentStream({
+              model: modelName,
+              contents,
+              config: fallbackConfig,
+            });
+
+            for await (const chunk of responseStream) {
+              const text = chunk.text;
+              if (text) {
+                fullText += text;
+                res.write(`data: ${JSON.stringify({ type: "token", text })}\n\n`);
+              }
+            }
+
+            streamCompleted = true;
+            break;
+          } catch (fallbackErr) {
+            console.warn("[CHAT GPR] Fallback without tools failed:", fallbackErr);
+            lastError = fallbackErr;
+          }
         }
       }
     }
