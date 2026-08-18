@@ -232,6 +232,7 @@ export default function App() {
           prompt: text,
           attachments,
           webSearchEnabled: webSearch,
+          settings,
         }),
         signal: controller.signal,
       });
@@ -246,6 +247,8 @@ export default function App() {
 
       let accumulatedContent = "";
       let detectedIntent: any = undefined;
+      let modelUsed: string | undefined = undefined;
+      let isFallbackMsg = false;
       let finalGeneratedImage: GeneratedImage | undefined = undefined;
 
       while (true) {
@@ -269,6 +272,13 @@ export default function App() {
                 updateAssistantMessage(targetConv.id, assistantMessageId, {
                   intent: parsed.intent,
                 });
+              } else if (parsed.type === "model_info") {
+                modelUsed = parsed.modelUsed;
+                isFallbackMsg = !!parsed.isFallback;
+                updateAssistantMessage(targetConv.id, assistantMessageId, {
+                  modelUsed,
+                  isFallback: isFallbackMsg,
+                });
               } else if (parsed.type === "visual_explanation_start") {
                 updateAssistantMessage(targetConv.id, assistantMessageId, {
                   visualExplanation: {
@@ -288,9 +298,13 @@ export default function App() {
                 });
               } else if (parsed.type === "token") {
                 accumulatedContent += parsed.text;
+                if (parsed.modelUsed) modelUsed = parsed.modelUsed;
+                if (parsed.isFallback) isFallbackMsg = true;
                 updateAssistantMessage(targetConv.id, assistantMessageId, {
                   content: accumulatedContent,
                   intent: detectedIntent,
+                  modelUsed,
+                  isFallback: isFallbackMsg,
                   isStreaming: true,
                 });
               } else if (parsed.type === "grounding") {
@@ -302,6 +316,9 @@ export default function App() {
                   imageUrl: parsed.imageUrl,
                   prompt: parsed.prompt,
                   revisedPrompt: parsed.revisedPrompt,
+                  model: parsed.model || "gemini-3.1-flash-image",
+                  imageSize: parsed.imageSize || "2K",
+                  aspectRatio: parsed.aspectRatio,
                   createdAt: Date.now(),
                 };
                 updateAssistantMessage(targetConv.id, assistantMessageId, {
@@ -317,6 +334,8 @@ export default function App() {
               } else if (parsed.type === "done") {
                 updateAssistantMessage(targetConv.id, assistantMessageId, {
                   isStreaming: false,
+                  modelUsed,
+                  isFallback: isFallbackMsg,
                 });
               }
             } catch (e) {

@@ -7,9 +7,14 @@ const ACTIVE_CHAT_KEY = "chat_gpr_active_chat_id";
 export const DEFAULT_SETTINGS: ChatSettings = {
   webSearchEnabled: false,
   preferredLanguage: "auto",
+  defaultImageResolution: "2K",
   temperature: 0.7,
   soundEnabled: true,
   autoTitle: true,
+  enableFallbackQ8: true,
+  fallbackModelName: "Q8_K_XL",
+  fallbackEndpointUrl: "https://hadadrjt-api.hf.space/v1",
+  fallbackProviderType: "OpenAI Compatible",
 };
 
 export function createNewConversation(isTemporary = false): Conversation {
@@ -114,7 +119,15 @@ export function loadSettings(): ChatSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    const merged = { ...DEFAULT_SETTINGS, ...parsed };
+    // Auto migrate any legacy localhost endpoints to the public OpenAI-compatible endpoint
+    if (!merged.fallbackEndpointUrl || merged.fallbackEndpointUrl.includes("localhost") || merged.fallbackEndpointUrl.includes("127.0.0.1")) {
+      merged.fallbackEndpointUrl = "https://hadadrjt-api.hf.space/v1";
+      merged.fallbackModelName = "Q8_K_XL";
+      merged.fallbackProviderType = "OpenAI Compatible";
+    }
+    return merged;
   } catch (e) {
     return DEFAULT_SETTINGS;
   }

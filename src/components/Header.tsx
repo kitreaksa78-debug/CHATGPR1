@@ -42,7 +42,7 @@ export const Header: React.FC<HeaderProps> = ({
           <Menu className="w-5 h-5" />
         </button>
 
-        <div className="hidden sm:block">
+        <div className="flex items-center">
           <Logo size="sm" showText={false} />
         </div>
 

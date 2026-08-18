@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { X, Sliders, Globe, Volume2, Search, Trash2, Check, Sparkles } from "lucide-react";
+import { X, Sliders, Globe, Volume2, Search, Trash2, Check, Sparkles, Zap } from "lucide-react";
 import { ChatSettings } from "../types.js";
 import { calculateStorageUsage } from "../utils/storage.js";
 

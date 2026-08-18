@@ -228,7 +228,7 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-[#6366F1] to-[#8B5CF6] text-white text-xs font-semibold font-khmer hover:opacity-95 transition-all shadow-md"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              បង្កើតម្តងទៀត / Regenerate
+              បង្កើតម្តងទៀត
             </button>
           )}
 

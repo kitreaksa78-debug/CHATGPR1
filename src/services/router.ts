@@ -185,7 +185,7 @@ export function routeUserRequest(
     /^(?:generate|create|render)\s+a\s+(.+)\s+(?:at|in|on|with|during)\s+(.+)/i,
   ];
 
-  // Exclude coding context from pure artistic generation
+  // Exclude coding and educational / math explanation contexts from pure artistic image generation
   const isCodingContext =
     lower.includes("html") ||
     lower.includes("javascript") ||
@@ -199,9 +199,36 @@ export function routeUserRequest(
     lower.includes("component") ||
     lower.includes("api");
 
+  const isEducationalOrMathExplanation =
+    lower.includes("ពន្យល់") ||
+    lower.includes("បកស្រាយ") ||
+    lower.includes("ទ្រឹស្តីបទ") ||
+    lower.includes("រូបមន្ត") ||
+    lower.includes("ដោះស្រាយ") ||
+    lower.includes("គណនា") ||
+    lower.includes("សមីការ") ||
+    lower.includes("លំហាត់") ||
+    lower.includes("និយមន័យ") ||
+    lower.includes("ហេតុអ្វី") ||
+    lower.includes("ពីតាករ") ||
+    lower.includes("ត្រីកោណ") ||
+    lower.includes("រង្វង់") ||
+    lower.includes("explain") ||
+    lower.includes("how to") ||
+    lower.includes("how does") ||
+    lower.includes("why does") ||
+    lower.includes("what is") ||
+    lower.includes("theorem") ||
+    lower.includes("formula") ||
+    lower.includes("calculate") ||
+    lower.includes("equation") ||
+    lower.includes("solve") ||
+    lower.includes("pythagor") ||
+    /[a-z]\s*[\^²³]\s*[\+\-]\s*[a-z]\s*[\^²³]\s*=\s*[a-z]\s*[\^²³]/i.test(lower);
+
   let isArtisticImageGen = false;
 
-  if (!isCodingContext) {
+  if (!isCodingContext && !isEducationalOrMathExplanation) {
     for (const regex of khmerImageTriggers) {
       if (regex.test(trimmed)) {
         isArtisticImageGen = true;
@@ -219,8 +246,27 @@ export function routeUserRequest(
     }
   }
 
-  // If user requested direct artistic picture creation
-  if (isArtisticImageGen) {
+  // Image Editing / Transformation Triggers (especially when an image is attached or referenced)
+  const imageEditTriggers = [
+    /^(?:សូម\s*)?(?:ជួយ\s*)?(?:កែប្រែ|កែ|ប្តូរ|ផ្លាស់ប្តូរ|ថែម|បន្ថែម|ដាក់|ដក|លុប)(?:រូបភាព|រូបថត|រូប|ផ្ទៃខាងក្រោយ|ពណ៌)?/i,
+    /(?:ប្តូរ|កែ|ថែម|ផ្លាស់ប្តូរ|កែប្រែ)\s*(?:ផ្ទៃខាងក្រោយ|ពណ៌|សម្លៀកបំពាក់|ខោអាវ|មុខ|ភ្នែក|សក់|បរិយាកាស|ពន្លឺ|ស្ទីល|ទេសភាព)/i,
+    /^(?:please\s+)?(?:edit|modify|change|transform|add|remove|replace|convert|repaint|redesign)\s+(?:this|the|an?)?\s*(?:image|photo|picture|background|lighting|clothes|outfit|face|hair|style|look)/i,
+    /(?:change|replace|modify|edit)\s+(?:the\s+)?(?:background|lighting|outfit|clothes|color|face|style)\s+to\s+/i,
+    /(?:add|put)\s+(?:a|an)?\s+(?:glasses|hat|sunglasses|krama|scarf|smile|sunset|lighting|effect)\s+(?:to|on|in)\s+(?:this|the)\s+image/i,
+  ];
+
+  let isImageEdit = false;
+  if (hasImage && !isCodingContext) {
+    for (const regex of imageEditTriggers) {
+      if (regex.test(trimmed)) {
+        isImageEdit = true;
+        break;
+      }
+    }
+  }
+
+  // If user requested direct artistic picture creation or conversational image editing
+  if (isArtisticImageGen || isImageEdit) {
     const cleaned = cleanPrompt(trimmed);
     return {
       intent: 'image_gen',
@@ -231,7 +277,9 @@ export function routeUserRequest(
       isCoding: false,
       isWebSearch: false,
       language: lang,
-      systemDirective: 'Generate the actual image matching the user description directly using image generation.',
+      systemDirective: isImageEdit 
+        ? 'Edit and transform the provided reference image based on user conversational instructions using gemini-3.1-flash-image.'
+        : 'Generate the actual image matching the user description directly using gemini-3.1-flash-image.',
     };
   }
 

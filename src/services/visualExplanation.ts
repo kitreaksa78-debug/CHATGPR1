@@ -377,7 +377,7 @@ export async function generateMermaidDiagram(prompt: string, subject?: string): 
   try {
     const ai = getGeminiClient();
     const result = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite",
+      model: "gemini-3.6-flash",
       contents: `You are a world-class educational diagram creator.
 Generate a valid, clean Mermaid.js diagram (flowchart TD or flowchart LR) explaining: "${prompt}".
 Rules:

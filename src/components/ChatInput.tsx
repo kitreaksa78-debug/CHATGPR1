@@ -12,12 +12,18 @@ import {
 import { Attachment } from "../types.js";
 
 interface ChatInputProps {
-  onSendMessage: (text: string, attachments: Attachment[], webSearch: boolean) => void;
+  onSendMessage: (
+    text: string,
+    attachments: Attachment[],
+    webSearch: boolean
+  ) => void;
   onStopGeneration: () => void;
   isStreaming: boolean;
   onOpenCamModal?: () => void;
   webSearchEnabled: boolean;
   onToggleWebSearch: () => void;
+  prefilledText?: string;
+  onClearPrefilledText?: () => void;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -26,14 +32,26 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   isStreaming,
   webSearchEnabled,
   onToggleWebSearch,
+  prefilledText,
+  onClearPrefilledText,
 }) => {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRef = useRef<any>(null);
+
+  // Handle prefilled text from suggestions
+  useEffect(() => {
+    if (prefilledText) {
+      setText(prefilledText);
+      textareaRef.current?.focus();
+      onClearPrefilledText?.();
+    }
+  }, [prefilledText, onClearPrefilledText]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -127,6 +145,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const handleSend = () => {
     if ((!text.trim() && attachments.length === 0) || isStreaming) return;
+
     onSendMessage(text.trim(), attachments, webSearchEnabled);
     setText("");
     setAttachments([]);
@@ -165,7 +184,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       recognitionRef.current = recognition;
       recognition.continuous = false;
       recognition.interimResults = true;
-      // Default to Khmer language with fallback
       recognition.lang = "km-KH";
 
       recognition.onstart = () => {
@@ -182,7 +200,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       recognition.onerror = (event: any) => {
         console.error("Speech recognition error:", event.error);
         if (event.error === "language-not-supported") {
-          // Fallback to English
           recognition.lang = "en-US";
           recognition.start();
           return;
@@ -262,7 +279,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="សួរអ្វីក៏បាន... / Ask anything, math problem, code, or generate image..."
+            placeholder="សួរអ្វីក៏បាន... / Ask anything..."
             rows={1}
             className="w-full bg-transparent text-[#F8FAFC] placeholder-[#64748B] text-sm sm:text-base focus:outline-none resize-none max-h-44 font-khmer leading-relaxed"
           />
@@ -314,7 +331,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     ? "bg-[#6366F1]/25 border border-[#6366F1] text-[#A5B4FC] shadow-sm shadow-[#6366F1]/30"
                     : "text-[#94A3B8] hover:text-white hover:bg-[#242933] border border-transparent"
                 }`}
-                title={webSearchEnabled ? "Google Search បើក៖ ស្វែងរកទិន្នន័យជាក់ស្តែងតាម Web" : "Google Search បិទ៖ ចុចដើម្បីបើកការស្វែងរកទិន្នន័យផ្ទាល់តាម Web"}
+                title={webSearchEnabled ? "Google Search បើក" : "Google Search បិទ"}
               >
                 <Globe className={`w-3.5 h-3.5 ${webSearchEnabled ? "text-[#818CF8] animate-pulse" : ""}`} />
                 <span className="hidden xs:inline sm:inline">Search</span>
@@ -333,7 +350,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#EF4444] hover:bg-[#DC2626] text-white text-xs font-semibold font-khmer transition-all shadow-lg shadow-[#EF4444]/20"
                 >
                   <Square className="w-3.5 h-3.5 fill-current" />
-                  <span>បញ្ឈប់ / Stop</span>
+                  <span>បញ្ឈប់</span>
                 </button>
               ) : (
                 <button
@@ -349,12 +366,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             </div>
           </div>
         </div>
-      </div>
-
-      <div className="text-center mt-2">
-        <p className="text-[11px] text-[#64748B] font-khmer">
-          CHAT GPR អាចធ្វើការវិភាគរូបភាព ឯកសារ បង្កើតរូបភាព និងដោះស្រាយលំហាត់ស្វ័យប្រវត្តិ
-        </p>
       </div>
     </div>
   );

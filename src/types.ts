@@ -59,8 +59,11 @@ export interface GeneratedImage {
   imageUrl: string;
   prompt: string;
   aspectRatio?: string;
+  imageSize?: '512px' | '1K' | '2K' | '4K';
   model?: string;
   revisedPrompt?: string;
+  isEdited?: boolean;
+  parentImageUrl?: string;
   createdAt: number;
 }
 
@@ -77,6 +80,8 @@ export interface Message {
   isStreaming?: boolean;
   error?: string;
   liked?: boolean | null; // true = liked, false = disliked, null = unrated
+  modelUsed?: string;
+  isFallback?: boolean;
 }
 
 export interface Conversation {
@@ -93,10 +98,15 @@ export interface Conversation {
 export interface ChatSettings {
   webSearchEnabled: boolean;
   preferredLanguage: 'auto' | 'km' | 'en';
+  defaultImageResolution: '1K' | '2K' | '4K';
   temperature: number;
   soundEnabled: boolean;
   autoTitle: boolean;
   customSystemPrompt?: string;
+  enableFallbackQ8?: boolean;
+  fallbackModelName?: string;
+  fallbackEndpointUrl?: string;
+  fallbackProviderType?: string;
 }
 
 export interface QuickPrompt {

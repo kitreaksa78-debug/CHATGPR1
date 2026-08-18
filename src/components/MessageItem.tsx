@@ -21,11 +21,13 @@ import {
   ImageIcon,
   AlertTriangle,
   Layers,
+  Zap,
 } from "lucide-react";
 import { Message, IntentCategory, VisualExplanation } from "../types.js";
 import { speakText, stopSpeaking } from "../utils/audio.js";
 import { GeneratedImage } from "./GeneratedImage.js";
 import { VisualExplanationCard } from "./VisualExplanationCard.js";
+import { ChatGprIcon } from "./ChatGprIcon.js";
 
 interface MessageItemProps {
   message: Message;
@@ -120,10 +122,8 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               U
             </div>
           ) : (
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#6366F1] via-[#8B5CF6] to-[#EC4899] p-0.5 shadow-md shadow-[#6366F1]/20">
-              <div className="w-full h-full bg-[#0B0D10] rounded-[10px] flex items-center justify-center">
-                <Sparkles className="w-4 h-4 text-[#818CF8]" />
-              </div>
+            <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-transparent">
+              <ChatGprIcon className="w-7 h-7" glow={false} />
             </div>
           )}
         </div>
@@ -132,10 +132,16 @@ export const MessageItem: React.FC<MessageItemProps> = ({
         <div className="flex-1 min-w-0 space-y-3">
           {/* Top meta & Intent badge for AI */}
           {!isUser && (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between flex-wrap gap-1.5">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-semibold text-white text-xs font-sans">CHAT GPR</span>
                 {getIntentBadge(message.intent, !!message.visualExplanation)}
+                {message.isFallback && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 font-sans">
+                    <Zap className="w-3 h-3 text-amber-400" />
+                    {message.modelUsed || "Q8_K_XL Fallback"}
+                  </span>
+                )}
               </div>
 
               <span className="text-[11px] text-[#64748B]">
