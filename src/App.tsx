@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { Analytics } from '@vercel/analytics/react';
 import { Sidebar } from "./components/Sidebar.js";
 import { Header } from "./components/Header.js";
 import { ChatArea } from "./components/ChatArea.js";
@@ -525,6 +526,9 @@ export default function App() {
         onSaveSettings={handleSaveSettings}
         onClearAllConversations={handleClearAllConversations}
       />
+      
+      {/* Vercel Web Analytics */}
+      <Analytics />
     </div>
   );
 }
