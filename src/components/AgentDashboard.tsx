@@ -284,7 +284,7 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
                             {agent.platform === "facebook" ? "Facebook" : "Telegram"} Agent
                           </h3>
                           <p className="text-xs text-[#94A3B8] truncate">
-                            {agent.pageName || agent.botUsername || "Not connected"}
+                            {agent.webhookUrl ? "✅ Connected" : "⚠️ Setup needed"}
                           </p>
                         </div>
                       </div>

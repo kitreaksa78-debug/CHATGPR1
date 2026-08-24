@@ -1,14 +1,12 @@
 /**
- * AI Router - Production-Grade Multi-Provider AI Router
+ * AI Router - Speed-Optimized Multi-Provider AI Router
  * 
- * Guarantees maximum availability with:
- * - 6 Gemini fallback models
- * - Pollinations.ai free backup
- * - Q8_K_XL OpenAI-compatible fallback
- * - Knowledge engine last resort
+ * Maximum speed with:
+ * - Fast Gemini models first (flash-lite = fastest)
+ * - 8s timeout per model (instant fallback)
  * - Circuit breaker for failed providers
- * - Health monitoring
- * - Automatic recovery
+ * - Pollinations.ai free backup
+ * - Knowledge engine last resort
  */
 
 import { getGeminiClient, formatAttachmentsForGemini } from "./gemini.js";
@@ -29,12 +27,6 @@ export interface ProviderHealth {
   cooldownUntil?: number;
 }
 
-export interface StreamToken {
-  text: string;
-  modelUsed?: string;
-  isFallback?: boolean;
-}
-
 export interface StreamCallbacks {
   onToken: (token: string) => void;
   onModelInfo?: (model: string, isFallback: boolean) => void;
@@ -50,25 +42,17 @@ export interface RouterOptions {
   timeoutMs?: number;
 }
 
-// ─── Provider Configuration ──────────────────────────────────────────────
+// ─── Speed-Optimized Configuration ──────────────────────────────────────
 
+// Models ordered by SPEED (fastest first). flash-lite is the fastest Gemini model.
 const GEMINI_MODELS = [
   "gemini-3.5-flash-lite",
   "gemini-3.6-flash",
-  "gemini-3.1-flash-lite",
   "gemini-flash-latest",
-  "gemini-3.1-pro-preview",
-  "gemini-3.7-flash",
 ];
 
-const POLLINATIONS_MODELS = [
-  "openai",
-  "gemini",
-];
-
-const CIRCUIT_BREAKER_THRESHOLD = 3; // errors before tripping
-const CIRCUIT_BREAKER_COOLDOWN_MS = 60_000; // 1 minute cooldown
-const MAX_RETRIES_PER_PROVIDER = 2;
+const CIRCUIT_BREAKER_THRESHOLD = 2; // Trip after 2 failures (fast)
+const CIRCUIT_BREAKER_COOLDOWN_MS = 30_000; // 30s cooldown (fast recovery)
 
 // ─── Health State ────────────────────────────────────────────────────────
 
@@ -107,8 +91,8 @@ function recordFailure(provider: string, model: string, error: string) {
   if (h.errorCount >= CIRCUIT_BREAKER_THRESHOLD) {
     h.status = "unavailable";
     h.cooldownUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
-    console.log(`[AIRouter] Circuit breaker TRIPPED for ${provider}:${model} — cooling down for ${CIRCUIT_BREAKER_COOLDOWN_MS / 1000}s`);
-  } else if (h.errorCount >= 2) {
+    console.log(`[AIRouter] 🔌 Circuit breaker TRIPPED: ${provider}:${model} — cooldown ${CIRCUIT_BREAKER_COOLDOWN_MS / 1000}s`);
+  } else if (h.errorCount >= 1) {
     h.status = "degraded";
   }
 }
@@ -117,10 +101,9 @@ function isAvailable(provider: string, model: string): boolean {
   const h = getHealth(provider, model);
   if (h.status === "unavailable" && h.cooldownUntil) {
     if (Date.now() < h.cooldownUntil) return false;
-    // Cooldown expired — allow retry
     h.status = "degraded";
     h.cooldownUntil = undefined;
-    console.log(`[AIRouter] Cooldown expired for ${provider}:${model} — retrying`);
+    console.log(`[AIRouter] ✅ Cooldown expired: ${provider}:${model} — retrying`);
   }
   return true;
 }
@@ -131,35 +114,11 @@ function isRateLimitError(err: any): boolean {
   const msg = String(err?.message || err || "").toLowerCase();
   const status = err?.status || err?.httpStatusCode || 0;
   return (
-    status === 429 ||
-    status === 403 ||
-    msg.includes("429") ||
-    msg.includes("rate limit") ||
-    msg.includes("resource_exhausted") ||
-    msg.includes("quota") ||
-    msg.includes("insufficient_quota") ||
+    status === 429 || status === 403 ||
+    msg.includes("429") || msg.includes("rate limit") ||
+    msg.includes("resource_exhausted") || msg.includes("quota") ||
     msg.includes("billing")
   );
-}
-
-function isServerError(err: any): boolean {
-  const status = err?.status || err?.httpStatusCode || 0;
-  return status >= 500 || status === 408 || status === 409;
-}
-
-function isAuthError(err: any): boolean {
-  const status = err?.status || err?.httpStatusCode || 0;
-  const msg = String(err?.message || "").toLowerCase();
-  return (
-    status === 401 ||
-    msg.includes("api_key_invalid") ||
-    msg.includes("invalid api key") ||
-    msg.includes("unauthorized")
-  );
-}
-
-function isRetryableError(err: any): boolean {
-  return isRateLimitError(err) || isServerError(err);
 }
 
 // ─── Gemini Provider ─────────────────────────────────────────────────────
@@ -197,19 +156,15 @@ async function tryGeminiModel(
   timeoutMs: number
 ): Promise<AsyncGenerator<string>> {
   if (!isAvailable("gemini", model)) {
-    throw new Error(`Gemini ${model} is in cooldown`);
+    throw new Error(`${model} in cooldown`);
   }
 
   try {
-    // Quick test: start the stream
     const gen = streamGemini(model, contents, config, timeoutMs);
-    const firstChunk = await gen.next();
-    
-    if (firstChunk.done) {
-      throw new Error("Empty response from Gemini");
-    }
+    const firstChunk = await gen.next();      if (firstChunk.done) {
+        throw new Error("Empty response or function call");
+      }
 
-    // Return a generator that yields the first chunk + rest
     return (async function* () {
       yield firstChunk.value;
       yield* gen;
@@ -233,7 +188,7 @@ async function* streamPollinations(
   
   const messages = [
     { role: "system", content: systemInstruction },
-    ...history.slice(-8).map(h => ({
+    ...history.slice(-6).map(h => ({
       role: h.role === "assistant" ? "assistant" as const : "user" as const,
       content: h.content,
     })),
@@ -262,7 +217,6 @@ async function* streamPollinations(
 
     const contentType = response.headers.get("content-type") || "";
     
-    // Handle SSE stream
     if (contentType.includes("text/event-stream") || contentType.includes("text/plain")) {
       const reader = response.body!.getReader();
       const decoder = new TextDecoder();
@@ -280,7 +234,6 @@ async function* streamPollinations(
           const trimmed = line.trim();
           if (!trimmed || trimmed.startsWith(":") || trimmed === "data: [DONE]") continue;
           
-          // Skip HTML responses
           if (trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html")) {
             throw new Error("HTML response rejected");
           }
@@ -296,13 +249,11 @@ async function* streamPollinations(
               // Non-JSON chunk, skip
             }
           } else {
-            // Plain text response (non-SSE)
             try {
               const parsed = JSON.parse(trimmed);
               const token = parsed.choices?.[0]?.message?.content || parsed.content || "";
               if (token && typeof token === "string") yield token;
             } catch {
-              // Plain text token
               if (trimmed.length > 0 && !trimmed.startsWith("<")) {
                 yield trimmed;
               }
@@ -311,7 +262,6 @@ async function* streamPollinations(
         }
       }
     } else {
-      // JSON response
       const text = await response.text();
       try {
         const parsed = JSON.parse(text);
@@ -334,7 +284,7 @@ async function tryPollinations(
   timeoutMs: number
 ): Promise<AsyncGenerator<string>> {
   if (!isAvailable("pollinations", model)) {
-    throw new Error(`Pollinations ${model} is in cooldown`);
+    throw new Error(`Pollinations ${model} in cooldown`);
   }
 
   try {
@@ -370,18 +320,21 @@ export async function routeAndStream(options: RouterOptions): Promise<{
     prompt,
     history,
     callbacks,
-    timeoutMs = 30_000,
+    timeoutMs = 8_000, // 8 seconds per model (SPEED OPTIMIZED)
   } = options;
 
   let fullText = "";
   const { onToken, onModelInfo } = callbacks;
 
   // ═══════════════════════════════════════════════════════════════════
-  // TIER 1: Gemini Models (Primary)
+  // TIER 1: Gemini Models (Primary — fastest models first)
   // ═══════════════════════════════════════════════════════════════════
   for (const model of GEMINI_MODELS) {
+    if (!isAvailable("gemini", model)) continue;
+    
     try {
-      console.log(`[AIRouter] Trying Gemini: ${model}`);
+      console.log(`[AIRouter] ⚡ Trying Gemini: ${model} (${timeoutMs}ms timeout)`);
+      const startTime = Date.now();
       const gen = await tryGeminiModel(model, contents, config, timeoutMs);
       
       for await (const chunk of gen) {
@@ -390,24 +343,24 @@ export async function routeAndStream(options: RouterOptions): Promise<{
       }
 
       if (fullText.length > 0) {
+        const elapsed = Date.now() - startTime;
         recordSuccess("gemini", model);
-        console.log(`[AIRouter] ✅ Gemini ${model} succeeded (${fullText.length} chars)`);
+        console.log(`[AIRouter] ✅ Gemini ${model} succeeded in ${elapsed}ms (${fullText.length} chars)`);
         onModelInfo?.(model, false);
         return { success: true, modelUsed: model, isFallback: false, fullText };
       }
     } catch (err: any) {
-      console.log(`[AIRouter] ❌ Gemini ${model}: ${err.message?.slice(0, 80)}`);
+      console.log(`[AIRouter] ❌ Gemini ${model}: ${err.message?.slice(0, 60)}`);
       
-      // If we already have partial text, consider it a success
       if (fullText.length > 0) {
         recordSuccess("gemini", model);
         onModelInfo?.(model, false);
         return { success: true, modelUsed: model, isFallback: false, fullText };
       }
 
-      // If rate-limited, don't try other Gemini models immediately
+      // If rate-limited, skip remaining Gemini models
       if (isRateLimitError(err)) {
-        console.log(`[AIRouter] Rate limited on ${model} — skipping remaining Gemini models`);
+        console.log(`[AIRouter] 🚫 Rate limited — skipping remaining Gemini`);
         break;
       }
     }
@@ -416,9 +369,12 @@ export async function routeAndStream(options: RouterOptions): Promise<{
   // ═══════════════════════════════════════════════════════════════════
   // TIER 2: Pollinations.ai (Free, no API key)
   // ═══════════════════════════════════════════════════════════════════
+  const POLLINATIONS_MODELS = ["openai", "gemini"];
+  
   for (const model of POLLINATIONS_MODELS) {
     try {
-      console.log(`[AIRouter] Trying Pollinations: ${model}`);
+      console.log(`[AIRouter] ⚡ Trying Pollinations: ${model}`);
+      const startTime = Date.now();
       const gen = await tryPollinations(prompt, config.systemInstruction || "", history, model, timeoutMs);
       
       for await (const chunk of gen) {
@@ -427,22 +383,23 @@ export async function routeAndStream(options: RouterOptions): Promise<{
       }
 
       if (fullText.length > 0) {
+        const elapsed = Date.now() - startTime;
         recordSuccess("pollinations", model);
-        console.log(`[AIRouter] ✅ Pollinations ${model} succeeded (${fullText.length} chars)`);
+        console.log(`[AIRouter] ✅ Pollinations ${model} succeeded in ${elapsed}ms`);
         onModelInfo?.(`Pollinations ${model}`, true);
         return { success: true, modelUsed: `Pollinations ${model}`, isFallback: true, fullText };
       }
     } catch (err: any) {
-      console.log(`[AIRouter] ❌ Pollinations ${model}: ${err.message?.slice(0, 80)}`);
+      console.log(`[AIRouter] ❌ Pollinations ${model}: ${err.message?.slice(0, 60)}`);
     }
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  // TIER 3: Q8_K_XL OpenAI-Compatible (Existing fallback)
+  // TIER 3: Q8_K_XL Fallback
   // ═══════════════════════════════════════════════════════════════════
   try {
     const { streamQ8Fallback } = await import("./q8Fallback.js");
-    console.log(`[AIRouter] Trying Q8_K_XL fallback...`);
+    console.log(`[AIRouter] ⚡ Trying Q8_K_XL fallback...`);
     
     const q8Result = await streamQ8Fallback({
       endpointUrl: "https://hadadrjt-api.hf.space/v1",
@@ -458,12 +415,12 @@ export async function routeAndStream(options: RouterOptions): Promise<{
     });
 
     if (q8Result.success && fullText.length > 0) {
-      console.log(`[AIRouter] ✅ Q8_K_XL succeeded (${fullText.length} chars)`);
-      onModelInfo?.("Q8_K_XL (OpenAI Compatible)", true);
+      console.log(`[AIRouter] ✅ Q8_K_XL succeeded`);
+      onModelInfo?.("Q8_K_XL", true);
       return { success: true, modelUsed: "Q8_K_XL", isFallback: true, fullText };
     }
   } catch (err: any) {
-    console.log(`[AIRouter] ❌ Q8_K_XL: ${err.message?.slice(0, 80)}`);
+    console.log(`[AIRouter] ❌ Q8_K_XL: ${err.message?.slice(0, 60)}`);
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -471,23 +428,22 @@ export async function routeAndStream(options: RouterOptions): Promise<{
   // ═══════════════════════════════════════════════════════════════════
   try {
     const { synthesizeAutonomousResponse } = await import("./knowledgeEngine.js");
-    console.log(`[AIRouter] Using Knowledge Engine last resort...`);
+    console.log(`[AIRouter] 🧠 Using Knowledge Engine...`);
     
     const response = synthesizeAutonomousResponse(prompt, history);
     
-    // Stream word by word for natural feel
     const words = response.split(/(\s+|\n+)/);
     for (let i = 0; i < words.length; i++) {
       if (words[i]) {
         fullText += words[i];
         onToken(words[i]);
         if (i % 3 === 0) {
-          await new Promise(r => setTimeout(r, 15));
+          await new Promise(r => setTimeout(r, 10));
         }
       }
     }
 
-    console.log(`[AIRouter] ✅ Knowledge Engine responded (${fullText.length} chars)`);
+    console.log(`[AIRouter] ✅ Knowledge Engine responded`);
     onModelInfo?.("CHAT GPR Knowledge Engine", true);
     return { success: true, modelUsed: "Knowledge Engine", isFallback: true, fullText };
   } catch (err: any) {
@@ -495,11 +451,9 @@ export async function routeAndStream(options: RouterOptions): Promise<{
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  // ABSOLUTE LAST RESORT: Friendly Khmer message (NEVER crash)
+  // ABSOLUTE LAST RESORT
   // ═══════════════════════════════════════════════════════════════════
-  const friendlyMessage = `សូមអភ័យទោស ប្រព័ន្ធ AI កំពុងមានបញ្ហាបណ្ដោះអាសន្ន។ សូមព្យាយាមម្ដងទៀតក្នុងរយៈពេលខ្លី។ 🙏
-
-*Sorry, the AI system is temporarily experiencing issues. Please try again in a moment.*`;
+  const friendlyMessage = `សូមអភ័យទោស ប្រព័ន្ធ AI កំពុងមានបញ្ហាបណ្ដោះអាសន្ន។ សូមព្យាយាមម្ដងទៀតក្នុងរយៈពេលខ្លី។ 🙏\n\n*Sorry, the AI system is temporarily experiencing issues. Please try again in a moment.*`;
 
   fullText = friendlyMessage;
   onToken(friendlyMessage);
