@@ -78,6 +78,8 @@ export interface Message {
   visualExplanation?: VisualExplanation;
   groundingSources?: GroundingSource[];
   isStreaming?: boolean;
+  searchStatus?: "searching" | "analyzing" | null;
+  searchMessage?: string;
   error?: string;
   liked?: boolean | null; // true = liked, false = disliked, null = unrated
   modelUsed?: string;

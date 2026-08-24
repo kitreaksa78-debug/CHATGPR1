@@ -333,16 +333,50 @@ export function routeUserRequest(
   const transIndicators = ['បកប្រែ', 'translate', 'meaning of', 'ខ្មែរទៅអង់គ្លេស', 'អង់គ្លេសទៅខ្មែរ'];
   const isTranslation = transIndicators.some(kw => lower.includes(kw));
 
-  // 8. Enhanced Web search intent & real-time keywords
-  const searchKeywords = [
-    'news', 'latest', 'today', 'yesterday', 'current', 'price', 'weather', 'stock', 'who won', 'who is',
-    'score', 'live', 'upcoming', 'release date', 'recent', 'what happened', 'update', 'exchange rate',
-    'crypto', 'bitcoin', 'btc', 'gold price', 'search web', 'search google', 'look up', 'google',
-    'ព័ត៌មាន', 'ថ្ងៃនេះ', 'ម្សិលមិញ', 'សប្តាហ៍នេះ', 'ខែនេះ', 'ឆ្នាំនេះ', 'ឆ្នាំ២០២៦', 'ឆ្នាំ2026', 'ឆ្នាំ2025',
-    'តម្លៃ', 'អាកាសធាតុ', 'ផ្សារហ៊ុន', 'អត្រាប្តូរប្រាក់', 'តម្លៃមាស', 'តើអ្នកណាជា', 'តើនរណាជា',
-    'ពិន្ទុបាល់ទាត់', 'លទ្ធផល', 'កាលវិភាគ', 'ស្វែងរក', 'ស្រាវជ្រាវ', 'លើ google', 'តាម web'
+  // 8. Intelligent Web Search Decision — ChatGPT-style automatic routing
+  // Search is triggered when:
+  //   a) User explicitly asks to search ("search", "look up", "google", etc.)
+  //   b) Question contains time-sensitive keywords (today, latest, current, news, etc.)
+  //   c) Question asks about prices, weather, scores, events, releases
+  //   d) User has webSearchEnabled toggle on
+  // Search is NOT triggered for:
+  //   a) Simple greetings, math, coding, translation
+  //   b) General knowledge questions ("what is photosynthesis")
+  //   c) Creative writing, opinions, explanations
+
+  const explicitSearchTriggers = [
+    'search', 'search web', 'search google', 'look up', 'find online', 'check online',
+    'google', 'browse', 'browse the web', 'search for', 'find out',
+    'ស្វែងរក', 'ស្រាវជ្រាវ', 'លើ google', 'តាម web', 'ស្វែងរកតាម', 'រកមើល',
   ];
-  const wantsSearch = webSearchEnabled || searchKeywords.some(kw => lower.includes(kw));
+
+  const timeSensitiveKeywords = [
+    'news', 'latest', 'today', 'yesterday', 'current', 'recent', 'newest', 'just',
+    'breaking', 'live', 'real-time', 'realtime', 'now', 'currently',
+    'this week', 'this month', 'this year', 'this morning', 'tonight',
+    'upcoming', 'tomorrow', 'next week', 'next month',
+    'who won', 'who is the', 'what happened', 'release date', 'what\'s new',
+    '2024', '2025', '2026', '2027',
+    'ថ្ងៃនេះ', 'ម្សិលមិញ', 'សប្តាហ៍នេះ', 'ខែនេះ', 'ឆ្នាំនេះ', 'ឆ្នាំ២០២៦', 'ឆ្នាំ២០២៥',
+    'ថ្មីៗ', 'កំពុង', 'ឥឡូវ', 'ថ្ងៃស្អែក', 'សប្តាហ៍ក្រោយ', 'ពេលនេះ',
+  ];
+
+  const factualLookupKeywords = [
+    'price', 'weather', 'stock', 'score', 'exchange rate', 'gold price', 'bitcoin',
+    'crypto', 'btc', 'ethereum', 'market', 'forecast', 'prediction', 'rate',
+    'population', 'gdp', 'inflation', 'unemployment', 'election', 'vote',
+    'ournament', 'championship', 'league', 'world cup', 'olympics',
+    'flight', 'visa', 'passport', 'embassy', 'currency',
+    'តម្លៃ', 'អាកាសធាតុ', 'ផ្សារហ៊ុន', 'អត្រាប្តូរប្រាក់', 'តម្លៃមាស',
+    'ពិន្ទុបាល់ទាត់', 'លទ្ធផល', 'កាលវិភាគ', 'តើអ្នកណាជា', 'តើនរណាជា',
+  ];
+
+  const hasExplicitSearch = explicitSearchTriggers.some(kw => lower.includes(kw));
+  const hasTimeSensitive = timeSensitiveKeywords.some(kw => lower.includes(kw));
+  const hasFactualLookup = factualLookupKeywords.some(kw => lower.includes(kw));
+
+  // Determine if search should be triggered
+  const wantsSearch = webSearchEnabled || hasExplicitSearch || hasTimeSensitive || hasFactualLookup;
 
   let determinedIntent: IntentCategory = 'text';
   if (isMath) determinedIntent = 'math';

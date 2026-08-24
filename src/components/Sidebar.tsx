@@ -11,9 +11,10 @@ import {
   Edit2,
   Settings,
   X,
-  Database,
+  LogOut,
 } from "lucide-react";
 import { Conversation } from "../types.js";
+import { User } from "../contexts/AuthContext.js";
 import { Logo } from "./Logo.js";
 import { calculateStorageUsage } from "../utils/storage.js";
 
@@ -29,6 +30,9 @@ interface SidebarProps {
   onTogglePin: (id: string) => void;
   onToggleArchive: (id: string) => void;
   onOpenSettings: () => void;
+  onOpenAgents?: () => void;
+  user?: User | null;
+  onLogout?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -43,6 +47,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onTogglePin,
   onToggleArchive,
   onOpenSettings,
+  onOpenAgents,
+  user,
+  onLogout,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -168,21 +175,46 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
 
-        {/* Settings Footer */}
-        <div className="p-3 border-t border-[#1E232E] bg-[#0E1015]">
-          <div className="flex items-center justify-between">
+        {/* User Profile + Settings Footer */}
+        <div className="p-3 border-t border-[#1E232E] bg-[#0E1015] space-y-2">
+          {user && (
+            <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-[#171A21] border border-[#242933]">
+              {user.picture ? (
+                <img src={user.picture} alt={user.name} className="w-8 h-8 rounded-full border border-[#242933] object-cover flex-shrink-0" />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#6366F1] to-[#8B5CF6] flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                  {user.name?.charAt(0)?.toUpperCase() || "U"}
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-white truncate">{user.name}</p>
+                {user.email && <p className="text-[10px] text-[#64748B] truncate">{user.email}</p>}
+              </div>
+              <button
+                onClick={onLogout}
+                className="p-1.5 rounded-lg text-[#64748B] hover:text-[#EF4444] hover:bg-[#EF4444]/10 transition-colors flex-shrink-0"
+                title="ចាកចេញ / Sign Out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              onClick={onOpenAgents}
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs text-[#94A3B8] hover:text-white hover:bg-[#171A21] font-khmer transition-colors"
+            >
+              <span>🤖</span>
+              <span>AI Agents</span>
+            </button>
             <button
               onClick={onOpenSettings}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-[#94A3B8] hover:text-white hover:bg-[#171A21] font-khmer transition-colors"
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs text-[#94A3B8] hover:text-white hover:bg-[#171A21] font-khmer transition-colors"
             >
               <Settings className="w-4 h-4 text-[#818CF8]" />
-              <span>ការកំណត់ / Settings</span>
+              <span>Settings</span>
             </button>
-
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#171A21] text-[10px] text-[#64748B] font-mono">
-              <Database className="w-3 h-3 text-[#10B981]" />
-              <span>{storageUsage.usedKb} KB</span>
-            </div>
           </div>
         </div>
       </aside>
