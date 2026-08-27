@@ -10,10 +10,11 @@ import { searchWeb, formatSearchResults } from "./src/services/webSearch.js";
 import {
   getAllAgents, getAgentById, createAgent, updateAgent, deleteAgent,
   toggleAgent, toggleHumanTakeover, getAgentConversations,
-  getFacebookAgent, getTelegramAgent
+  getFacebookAgent, getTelegramAgent,
+  getConversationById, addMessageToConversation
 } from "./src/services/agentStorage.js";
-import { verifyFacebookWebhook, processFacebookMessage, setupFacebookWebhook, getFacebookPageInfo } from "./src/services/facebookAgent.js";
-import { processTelegramMessage, setupTelegramWebhook, getTelegramBotInfo } from "./src/services/telegramAgent.js";
+import { verifyFacebookWebhook, processFacebookMessage, setupFacebookWebhook, getFacebookPageInfo, createFacebookPost, processFacebookComment } from "./src/services/facebookAgent.js";
+import { processTelegramMessage, setupTelegramWebhook, getTelegramBotInfo, sendTelegramMessage } from "./src/services/telegramAgent.js";
 import { generateVisualExplanation } from "./src/services/visualExplanation.js";
 import { parseGeminiError } from "./src/services/errorHelper.js";
 import { generateResilientResponse } from "./src/services/fallbackResponder.js";
@@ -25,6 +26,7 @@ dotenv.config({ path: ".env.local" });
 
 const app = express();
 const PORT = 3000;
+const TELEGRAM_API = "https://api.telegram.org";
 
 // Body Parsers with large limit for base64 image/file uploads
 app.use(express.json({ limit: "50mb" }));
@@ -652,6 +654,84 @@ app.get("/api/agents/:id/conversations", (req, res) => {
   res.json({ conversations: convs });
 });
 
+// Reply to a Telegram/Facebook user from the dashboard
+app.post("/api/agents/:id/reply", async (req, res) => {
+  const { userId, message } = req.body;
+  if (!userId || !message) {
+    return res.status(400).json({ error: "userId and message are required" });
+  }
+
+  const agent = getAgentById(req.params.id);
+  if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+  try {
+    if (agent.platform === "telegram" && agent.botToken) {
+      // Send via Telegram Bot API
+      const response = await fetch(`${TELEGRAM_API}/bot${agent.botToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: userId,
+          text: message.slice(0, 4096),
+        }),
+      });
+      const data = await response.json();
+      if (data.ok) {
+        // Add admin message to conversation
+        const { addMessageToConversation } = await import("./src/services/agentStorage.js");
+        const convs = getAgentConversations(agent.id);
+        const conv = convs.find((c) => c.userId === userId);
+        if (conv) {
+          addMessageToConversation(conv.id, "assistant", message);
+        }
+        res.json({ success: true });
+      } else {
+        console.error("[Telegram] Send error:", data.description);
+        res.status(500).json({ error: data.description || "Failed to send message" });
+      }
+    } else if (agent.platform === "facebook" && agent.pageAccessToken) {
+      // Send via Facebook Graph API
+      const { sendFacebookMessage } = await import("./src/services/facebookAgent.js");
+      const sent = await sendFacebookMessage(userId, agent.pageAccessToken, message);
+      if (sent) {
+        const { addMessageToConversation } = await import("./src/services/agentStorage.js");
+        const convs = getAgentConversations(agent.id);
+        const conv = convs.find((c) => c.userId === userId);
+        if (conv) {
+          addMessageToConversation(conv.id, "assistant", message);
+        }
+        res.json({ success: true });
+      } else {
+        res.status(500).json({ error: "Failed to send message" });
+      }
+    } else {
+      res.status(400).json({ error: "Agent not configured for messaging" });
+    }
+  } catch (err: any) {
+    console.error("[Agent Reply Error]", err.message);
+    res.status(500).json({ error: "Failed to send message" });
+  }
+});
+
+// Update Agent Settings
+app.put("/api/agents/:id", (req, res) => {
+  const { welcomeMessage, systemPrompt, commentReplyPrompt, autoPostPrompt, botToken, pageAccessToken } = req.body;
+  const updates: any = {};
+  if (welcomeMessage !== undefined) updates.welcomeMessage = welcomeMessage;
+  if (systemPrompt !== undefined) updates.systemPrompt = systemPrompt;
+  if (commentReplyPrompt !== undefined) updates.commentReplyPrompt = commentReplyPrompt;
+  if (autoPostPrompt !== undefined) updates.autoPostPrompt = autoPostPrompt;
+  if (botToken !== undefined) updates.botToken = botToken;
+  if (pageAccessToken !== undefined) updates.pageAccessToken = pageAccessToken;
+
+  const updated = updateAgent(req.params.id, updates);
+  if (updated) {
+    res.json({ success: true, agent: { ...updated, botToken: updated.botToken ? "***" : undefined, pageAccessToken: updated.pageAccessToken ? "***" : undefined } });
+  } else {
+    res.status(404).json({ error: "Agent not found" });
+  }
+});
+
 // ============ FACEBOOK WEBHOOK ============
 
 app.get("/api/webhook/facebook", (req, res) => {
@@ -687,23 +767,26 @@ app.post("/api/webhook/facebook", async (req, res) => {
 
   try {
     await processFacebookMessage(req.body, agent, async (message, history) => {
-      // Use existing AI service
-      const ai = getGeminiClient();
-      const contents = history.map(h => ({
-        role: h.role === "assistant" ? "model" : "user",
-        parts: [{ text: h.content }],
-      }));
-      contents.push({ role: "user", parts: [{ text: message }] });
-
-      const result = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents,
+      // Use AI Router with fallbacks for maximum reliability
+      let fullText = "";
+      const result = await routeAndStream({
+        contents: history.map(h => ({
+          role: h.role === "assistant" ? "model" : "user",
+          parts: [{ text: h.content }],
+        })).concat([{ role: "user", parts: [{ text: message }] }]),
         config: {
-          systemInstruction: agent.systemPrompt || "You are a helpful AI assistant. Answer concisely and friendly.",
+          systemInstruction: agent.systemPrompt || "You are a helpful AI assistant for a phone store. Answer concisely and friendly in Khmer when the user writes in Khmer.",
           temperature: 0.7,
         },
+        systemInstruction: agent.systemPrompt || "You are a helpful AI assistant.",
+        prompt: message,
+        history,
+        callbacks: {
+          onToken: (token) => { fullText += token; },
+        },
+        timeoutMs: 15_000,
       });
-      return result.text || "I'm sorry, I couldn't generate a response.";
+      return result.fullText || "I'm sorry, I couldn't generate a response.";
     });
   } catch (err) {
     console.error("[Facebook Webhook Error]", err);
@@ -742,6 +825,110 @@ app.post("/api/agents/facebook/verify-token", async (req, res) => {
   }
 });
 
+// ============ FACEBOOK AUTO-POST ============
+
+app.post("/api/agents/facebook/post", async (req, res) => {
+  const agent = getFacebookAgent();
+  if (!agent?.pageAccessToken) {
+    return res.status(400).json({ error: "Facebook agent not configured" });
+  }    const { message, link, imageUrl, useAI, aiPrompt } = req.body;
+    const effectivePrompt = aiPrompt || (useAI ? agent.autoPostPrompt : undefined);
+    if (!message && !effectivePrompt) {
+      return res.status(400).json({ error: "Message or AI prompt is required" });
+    }
+
+  try {
+    let postMessage = message;
+
+    // If useAI is true or effectivePrompt exists, generate the post content using AI Router
+    if (effectivePrompt) {
+      const { routeAndStream } = await import("./src/services/aiRouter.js");
+      let fullText = "";
+      await routeAndStream({
+        contents: [{ role: "user", parts: [{ text: `Generate a professional Facebook post for this topic: ${effectivePrompt}. Keep it engaging, use emojis, and write in Khmer if the prompt is in Khmer. Do NOT include quotes around the post.` }] }],
+        config: { temperature: 0.8 },
+        systemInstruction: agent.autoPostPrompt || "You are a social media expert. Generate engaging Facebook posts.",
+        prompt: effectivePrompt,
+        history: [],
+        callbacks: { onToken: (token) => { fullText += token; } },
+        timeoutMs: 15000,
+      });
+      postMessage = fullText || message;
+    }
+
+    if (!postMessage) {
+      return res.status(400).json({ error: "Could not generate post content" });
+    }
+
+    const result = await createFacebookPost({
+      pageAccessToken: agent.pageAccessToken,
+      message: postMessage,
+      link,
+      imageUrl,
+    });
+
+    if (result.success) {
+      console.log(`[Facebook] Post created: ${result.postId}`);
+      res.json({ success: true, postId: result.postId, message: postMessage });
+    } else {
+      res.status(500).json({ error: result.error || "Failed to create post" });
+    }
+  } catch (err: any) {
+    console.error("[Facebook] Post error:", err.message);
+    res.status(500).json({ error: "Failed to create post" });
+  }
+});
+
+// ============ FACEBOOK COMMENT WEBHOOK ============
+
+app.get("/api/webhook/facebook/comments", (req, res) => {
+  // Comment webhook verification uses the same GET verification as messages
+  const mode = req.query["hub.mode"] as string;
+  const token = req.query["hub.verify_token"] as string;
+  const challenge = req.query["hub.challenge"] as string;
+
+  const agent = getFacebookAgent();
+  if (!agent?.verifyToken) {
+    return res.status(403).json({ error: "Facebook agent not configured" });
+  }
+
+  const result = verifyFacebookWebhook(mode, token, challenge, agent.verifyToken);
+  if (result) {
+    res.send(result);
+  } else {
+    res.status(403).json({ error: "Verification failed" });
+  }
+});
+
+app.post("/api/webhook/facebook/comments", async (req, res) => {
+  res.sendStatus(200); // Acknowledge immediately
+
+  const agent = getFacebookAgent();
+  if (!agent?.enabled || !agent.pageAccessToken) return;
+
+  try {
+    await processFacebookComment(req.body, agent, async (message, history) => {
+      const { routeAndStream } = await import("./src/services/aiRouter.js");
+      let fullText = "";
+      const result = await routeAndStream({
+        contents: history.map(h => ({
+          role: h.role === "assistant" ? "model" : "user",
+          parts: [{ text: h.content }],
+        })).concat([{ role: "user", parts: [{ text: message }] }]),
+        config: { temperature: 0.7 },
+        systemInstruction: agent.commentReplyPrompt || agent.systemPrompt || "You are a helpful AI assistant. Reply to comments concisely and friendly. Answer in Khmer if the comment is in Khmer.",
+        prompt: message,
+        history,
+        callbacks: { onToken: (token) => { fullText += token; } },
+        timeoutMs: 15000,
+      });
+      return result.fullText || "Thanks for your comment!";
+    });
+  } catch (err) {
+    console.error("[Facebook Comment Webhook Error]", err);
+  }
+});
+
 // ============ TELEGRAM WEBHOOK ============
 
 app.post("/api/webhook/telegram", async (req, res) => {
@@ -751,16 +938,60 @@ app.post("/api/webhook/telegram", async (req, res) => {
   if (!agent?.enabled || !agent.botToken) return;
 
   try {
-    await processTelegramMessage(req.body, agent, async (message, history) => {
+    await processTelegramMessage(req.body, agent, async (message, history, imageBase64?) => {
       const ai = getGeminiClient();
-      const contents = history.map(h => ({
+
+      // Auto-detect search intent for current info (prices, news, availability)
+      let searchContext = "";
+      const searchKeywords = ["តម្លៃ", "price", "តម្លៃរូបិយវត្ថុ", "ថ្ងៃនេះ", "today", "ឥឡូវ", "now", "2024", "2025", "2026", "new", "ថ្មី", "release", "ចេញ", "ទើប", "just", "available", "ប្រើប្រាស់", "use", "spec", "specs", "features", "លក្ខណៈ", "camera", "កាមេរ៉ា", "battery", "ថ្ម", "screen", "អេក្រង់", "storage", "ផ្ទុក", "ram", "processor", "CPU", "GPU", "iPhone", "Samsung", "Galaxy", "Pixel", "Xiaomi", "OPPO", "vivo", "Huawei"];
+      const needsSearch = searchKeywords.some(kw => message.toLowerCase().includes(kw.toLowerCase()));
+      
+      if (needsSearch && !imageBase64) {
+        try {
+          console.log(`[Telegram] Searching web for: ${message.slice(0, 50)}`);
+          const searchResults = await searchWeb(message, 5);
+          if (searchResults.length > 0) {
+            searchContext = formatSearchResults(searchResults);
+            console.log(`[Telegram] Found ${searchResults.length} search results`);
+          }
+        } catch (searchErr) {
+          console.warn("[Telegram] Web search failed:", searchErr);
+        }
+      }
+
+      const contents: any[] = history.map(h => ({
         role: h.role === "assistant" ? "model" : "user",
         parts: [{ text: h.content }],
       }));
-      contents.push({ role: "user", parts: [{ text: message }] });
 
-      const systemInstruction = agent.systemPrompt || "You are a helpful AI assistant. Answer concisely and friendly.";
-      const models = ["gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+      // Build user message parts
+      const userParts: any[] = [];
+      
+      // Add image if present
+      if (imageBase64) {
+        userParts.push({
+          inlineData: {
+            mimeType: "image/jpeg",
+            data: imageBase64,
+          },
+        });
+        console.log(`[Telegram] Image attached for analysis (${(imageBase64.length / 1024).toFixed(0)}KB base64)`);
+      }
+      
+      // Add text (with search context if available)
+      const finalMessage = searchContext
+        ? `${message}\n\n---\nព័ត៌មានស្វែងរកបាន៖\n${searchContext}\n\n---\nសូមឆ្លើយតបដោយផ្អែកលើព័ត៌មានខាងលើ និងចំណេះដឹងរបស់អ្នក។ ប្រសិនបើព័ត៌មានមិនគ្រប់គ្រាន់ សូមប្រើចំណេះដឹងរបស់អ្នក។ ឆ្លើយជាភាសាដែលអ្នកប្រើប្រើប្រាស់។`
+        : message;
+      userParts.push({ text: finalMessage });
+      contents.push({ role: "user", parts: userParts });
+
+      const systemInstruction = imageBase64
+        ? (agent.systemPrompt || "You are a helpful AI assistant with vision capabilities. Analyze images carefully and describe what you see in detail. Answer in the same language as the user's text prompt. If no text prompt is provided, describe the image comprehensively.")
+        : (agent.systemPrompt || "You are a helpful AI assistant for a phone store. Answer concisely and friendly in Khmer when the user writes in Khmer. Use web search results when available for current prices and information.");
+
+      const models = imageBase64
+        ? ["gemini-3.5-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"] // Vision-capable models
+        : ["gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
 
       for (const modelName of models) {
         try {
@@ -777,7 +1008,9 @@ app.post("/api/webhook/telegram", async (req, res) => {
         }
       }
 
-      return "I'm experiencing high demand right now. Please try again in a moment.";
+      return imageBase64
+        ? "សូមអភ័យទោស មិនអាចវិភាគរូបភាពបាននៅពេលនេះ។ សូមព្យាយាមម្ដងទៀត។"
+        : "I'm experiencing high demand right now. Please try again in a moment.";
     });
   } catch (err) {
     console.error("[Telegram Webhook Error]", err);

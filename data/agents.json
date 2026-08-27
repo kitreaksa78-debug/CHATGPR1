@@ -3,13 +3,13 @@
     "platform": "telegram",
     "enabled": true,
     "humanTakeover": false,
-    "botToken": "8918595165:AAFvjWEu-lOm9xRzKjjQzQ1oY5xu6g_-AHU",
-    "verifyToken": "verify_1787567494518",
-    "welcomeMessage": "សួស្តីមកកាន់ហាងលក់ទូរស័ព្ទ",
-    "systemPrompt": "ណែនាំភ្ញៀវអំពីទូរសព្ទហើយអោយទាក់ទងមកខ្ញុំតាមរយៈ@salKitreaksa",
-    "id": "agent_telegram_1787567494518",
-    "createdAt": 1787567494518,
-    "updatedAt": 1787567531133,
+    "botToken": "8976156814:AAH3gS2YG6e2pNSNOvm-tz8wr8gWG3l7k7U",
+    "verifyToken": "verify_1787760031987",
+    "welcomeMessage": "👋 Welcome! How can I help you?",
+    "systemPrompt": "អ្នកជា chat gpt",
+    "id": "agent_telegram_1787760031987",
+    "createdAt": 1787760031987,
+    "updatedAt": 1787760036838,
     "webhookUrl": "https://3000-f35088b8-3fe6-487f-8668-b0fa7a526013.daytonaproxy01.net/api/webhook/telegram"
   }
 ]

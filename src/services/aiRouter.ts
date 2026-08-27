@@ -10,6 +10,8 @@
  */
 
 import { getGeminiClient, formatAttachmentsForGemini } from "./gemini.js";
+import { getApiKeyManager } from "./apiKeyManager.js";
+import { getResponseCache } from "./responseCache.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -395,7 +397,185 @@ export async function routeAndStream(options: RouterOptions): Promise<{
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  // TIER 3: Q8_K_XL Fallback
+  // TIER 3: Groq Cloud (Free Llama 3)
+  // ═══════════════════════════════════════════════════════════════════
+  const GROQ_API_KEY = process.env.GROQ_API_KEY;
+  if (GROQ_API_KEY) {
+    const GROQ_MODELS = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"];
+    
+    for (const model of GROQ_MODELS) {
+      try {
+        console.log(`[AIRouter] ⚡ Trying Groq: ${model}`);
+        const startTime = Date.now();
+        
+        const messages = [
+          { role: "system", content: config.systemInstruction || "You are a helpful AI assistant." },
+          ...history.slice(-6).map(h => ({
+            role: h.role === "assistant" ? "assistant" as const : "user" as const,
+            content: h.content,
+          })),
+          { role: "user" as const, content: prompt },
+        ];
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+          const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${GROQ_API_KEY}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              stream: true,
+              temperature: 0.7,
+              max_tokens: 2048,
+            }),
+            signal: controller.signal,
+          });
+
+          clearTimeout(timer);
+
+          if (!response.ok) {
+            const errText = await response.text().catch(() => "");
+            throw new Error(`Groq HTTP ${response.status}: ${errText.slice(0, 100)}`);
+          }
+
+          const reader = response.body!.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith(":") || trimmed === "data: [DONE]") continue;
+              
+              if (trimmed.startsWith("data: ")) {
+                const data = trimmed.slice(6).trim();
+                if (data === "[DONE]") continue;
+                try {
+                  const parsed = JSON.parse(data);
+                  const token = parsed.choices?.[0]?.delta?.content || "";
+                  if (token && typeof token === "string") {
+                    fullText += token;
+                    onToken(token);
+                  }
+                } catch {}
+              }
+            }
+          }
+
+          if (fullText.length > 0) {
+            const elapsed = Date.now() - startTime;
+            recordSuccess("groq", model);
+            console.log(`[AIRouter] ✅ Groq ${model} succeeded in ${elapsed}ms`);
+            onModelInfo?.(`Groq ${model}`, true);
+            return { success: true, modelUsed: `Groq ${model}`, isFallback: true, fullText };
+          }
+        } catch (err: any) {
+          clearTimeout(timer);
+          throw err;
+        }
+      } catch (err: any) {
+        console.log(`[AIRouter] ❌ Groq ${model}: ${err.message?.slice(0, 60)}`);
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // TIER 4: Cohere (Free tier)
+  // ═══════════════════════════════════════════════════════════════════
+  const COHERE_API_KEY = process.env.COHERE_API_KEY;
+  if (COHERE_API_KEY) {
+    try {
+      console.log(`[AIRouter] ⚡ Trying Cohere Command-R...`);
+      const startTime = Date.now();
+      
+      const chatHistory = history.slice(-6).map(h => ({
+        role: h.role === "assistant" ? "CHATBOT" as const : "USER" as const,
+        message: h.content,
+      }));
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const response = await fetch("https://api.cohere.ai/v1/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${COHERE_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: "command-r",
+            message: prompt,
+            chat_history: chatHistory,
+            preamble: config.systemInstruction || "You are a helpful AI assistant.",
+            stream: true,
+          }),
+          signal: controller.signal,
+        });
+
+        clearTimeout(timer);
+
+        if (!response.ok) {
+          const errText = await response.text().catch(() => "");
+          throw new Error(`Cohere HTTP ${response.status}: ${errText.slice(0, 100)}`);
+        }
+
+        const reader = response.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (parsed.type === "content-delta" && parsed.delta?.message) {
+                fullText += parsed.delta.message;
+                onToken(parsed.delta.message);
+              }
+            } catch {}
+          }
+        }
+
+        if (fullText.length > 0) {
+          const elapsed = Date.now() - startTime;
+          recordSuccess("cohere", "command-r");
+          console.log(`[AIRouter] ✅ Cohere succeeded in ${elapsed}ms`);
+          onModelInfo?.(`Cohere Command-R`, true);
+          return { success: true, modelUsed: `Cohere Command-R`, isFallback: true, fullText };
+        }
+      } catch (err: any) {
+        clearTimeout(timer);
+        throw err;
+      }
+    } catch (err: any) {
+      console.log(`[AIRouter] ❌ Cohere: ${err.message?.slice(0, 60)}`);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // TIER 5: Q8_K_XL Fallback
   // ═══════════════════════════════════════════════════════════════════
   try {
     const { streamQ8Fallback } = await import("./q8Fallback.js");

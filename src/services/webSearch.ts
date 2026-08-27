@@ -1,13 +1,13 @@
 /**
- * Web Search Service — Multi-provider intelligent search
+ * Web Search Service — Google Programmable Search Engine
  *
- * Provider Priority:
- * 1. SearXNG (https://priv.au/) — aggregates Google, Bing, etc.
- * 2. DuckDuckGo HTML — reliable free fallback
- * 3. DuckDuckGo JSON API — final fallback
+ * Single Provider: Google Custom Search API
+ * - High quality, reliable results
+ * - Free tier: 100 queries/day
+ * - Paid: $5 per 1000 queries
  *
  * Features:
- * - Intelligent query rewriting
+ * - Intelligent query rewriting (Khmer → English)
  * - Multi-query search with deduplication
  * - Source quality ranking
  * - Date awareness for time-sensitive queries
@@ -164,176 +164,180 @@ function deduplicate(results: SearchResult[]): SearchResult[] {
 }
 
 // ─────────────────────────────────────────────
-// 4. SearXNG SEARCH PROVIDER
+// 4. SearXNG (Free, Open-Source Meta Search)
 // ─────────────────────────────────────────────
 
 const SEARXNG_INSTANCES = [
-  "https://priv.au",
-  "https://search.sapti.me",
+  "https://search.inetol.net",
+  "https://searx.work",
   "https://search.ononoki.org",
   "https://searx.tiekoetter.com",
-  "https://search.bus-hit.me",
-  "https://searx.work",
-  "https://search.mdosch.de",
+  "https://search.sapti.me",
+  "https://searx.be",
 ];
 
-async function searchSearXNGInstance(instance: string, query: string, maxResults: number): Promise<SearchResult[]> {
+async function searchSearXNG(query: string, maxResults: number): Promise<SearchResult[]> {
+  for (const instance of SEARXNG_INSTANCES) {
+    try {
+      const url = `${instance}/search?q=${encodeURIComponent(query)}&format=json&categories=general&language=en`;
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Accept": "application/json",
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (!res.ok) continue;
+
+      const data = await res.json();
+      const results: SearchResult[] = [];
+
+      if (data.results && Array.isArray(data.results)) {
+        for (const item of data.results.slice(0, maxResults)) {
+          if (item.title && item.url) {
+            results.push({
+              title: item.title.trim(),
+              snippet: (item.content || "").trim().slice(0, 500),
+              url: item.url,
+              domain: getDomain(item.url),
+              publishedDate: item.publishedDate || undefined,
+              score: 0,
+            });
+          }
+        }
+      }
+
+      if (results.length > 0) {
+        console.log(`[WebSearch] SearXNG returned ${results.length} results from ${instance}`);
+        return results;
+      }
+    } catch (err) {
+      console.warn(`[WebSearch] SearXNG ${instance} failed: ${(err as Error).message?.slice(0, 40)}`);
+    }
+  }
+  return [];
+}
+
+// ─────────────────────────────────────────────
+// 5. GOOGLE CUSTOM SEARCH API (if configured)
+// ─────────────────────────────────────────────
+
+function getGoogleCSEConfig() {
+  return {
+    apiKey: process.env.GOOGLE_API_KEY || "",
+    cseId: process.env.GOOGLE_CSE_ID || "",
+  };
+}
+
+async function searchGoogle(query: string, maxResults: number, startIndex = 1): Promise<SearchResult[]> {
+  const { apiKey: GOOGLE_API_KEY, cseId: GOOGLE_CSE_ID } = getGoogleCSEConfig();
+  if (!GOOGLE_API_KEY || !GOOGLE_CSE_ID) {
+    console.warn("[WebSearch] Google CSE not configured (missing GOOGLE_API_KEY or GOOGLE_CSE_ID)");
+    return [];
+  }
+
   try {
-    const url = `${instance}/search?q=${encodeURIComponent(query)}&format=json&categories=general&language=en`;
+    const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_API_KEY}&cx=${GOOGLE_CSE_ID}&q=${encodeURIComponent(query)}&num=${maxResults}&start=${startIndex}&lr=lang_en&safe=off`;
+    
     const res = await fetch(url, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/html, */*",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       },
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(8000),
     });
 
     if (!res.ok) {
-      console.warn(`[WebSearch] SearXNG ${instance} returned HTTP ${res.status}`);
+      const errText = await res.text().catch(() => "");
+      console.warn(`[WebSearch] Google CSE returned HTTP ${res.status}: ${errText.slice(0, 200)}`);
       return [];
     }
 
-    const contentType = res.headers.get("content-type") || "";
-    const text = await res.text();
-
-    // Validate JSON response
-    if (!contentType.includes("json") && !text.trimStart().startsWith("{")) {
-      console.warn(`[WebSearch] SearXNG ${instance} returned non-JSON (${contentType})`);
-      return [];
-    }
-
-    let data: any;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      console.warn(`[WebSearch] SearXNG ${instance} returned invalid JSON`);
-      return [];
-    }
-
+    const data = await res.json();
     const results: SearchResult[] = [];
-    if (data.results && Array.isArray(data.results)) {
-      for (const item of data.results.slice(0, maxResults)) {
-        if (item.title && item.url) {
+
+    if (data.items && Array.isArray(data.items)) {
+      for (const item of data.items.slice(0, maxResults)) {
+        if (item.title && item.link) {
           results.push({
             title: item.title.trim(),
-            snippet: (item.content || "").trim().slice(0, 500),
-            url: item.url,
-            domain: getDomain(item.url),
-            publishedDate: item.publishedDate || undefined,
+            snippet: (item.snippet || "").trim().slice(0, 500),
+            url: item.link,
+            domain: getDomain(item.link),
+            publishedDate: item.pagemap?.metatags?.[0]?.["article:published_time"] || undefined,
             score: 0,
           });
         }
       }
     }
 
-    console.log(`[WebSearch] SearXNG ${instance} returned ${results.length} results`);
+    console.log(`[WebSearch] Google CSE returned ${results.length} results for "${query.slice(0, 40)}"`);
     return results;
   } catch (err) {
-    console.warn(`[WebSearch] SearXNG ${instance} failed: ${(err as Error).message?.slice(0, 60)}`);
+    console.warn(`[WebSearch] Google CSE failed: ${(err as Error).message?.slice(0, 60)}`);
     return [];
   }
 }
 
-async function searchSearXNG(query: string, maxResults: number): Promise<SearchResult[]> {
-  for (const instance of SEARXNG_INSTANCES) {
-    const results = await searchSearXNGInstance(instance, query, maxResults);
-    if (results.length > 0) return results;
-  }
-  console.warn(`[WebSearch] All SearXNG instances failed for "${query.slice(0, 40)}"`);
-  return [];
-}
-
 // ─────────────────────────────────────────────
-// 5. DUCKDUCKGO HTML FALLBACK (Most Reliable)
+// 6. DUCKDUCKGO FALLBACK (Lite endpoint)
 // ─────────────────────────────────────────────
 
-async function searchDuckDuckGoHTML(query: string, maxResults: number): Promise<SearchResult[]> {
+async function searchDuckDuckGoLite(query: string, maxResults: number): Promise<SearchResult[]> {
   try {
-    const res = await fetch("https://html.duckduckgo.com/html/", {
+    // Use DuckDuckGo Lite which returns simpler HTML
+    const res = await fetch("https://lite.duckduckgo.com/lite/", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       },
       body: `q=${encodeURIComponent(query)}`,
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(10000),
     });
 
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.warn(`[WebSearch] DuckDuckGo Lite returned HTTP ${res.status}`);
+      return [];
+    }
 
     const html = await res.text();
     const results: SearchResult[] = [];
 
-    // Parse HTML results using regex
-    const resultBlocks = html.split('class="result__body"').slice(1, maxResults + 1);
+    // Parse lite.duckduckgo.com HTML - links are in <a> tags with class="result-link"
+    const linkRegex = /<a[^>]+class="result-link"[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/gi;
+    const snippetRegex = /<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
+    
+    let match;
+    const links: { url: string; title: string }[] = [];
+    const snippets: string[] = [];
 
-    for (const block of resultBlocks) {
-      const urlMatch = block.match(/class="result__url"[^>]*>([^<]+)/);
-      const titleMatch = block.match(/class="result__a"[^>]*>([^<]+)/);
-      const snippetMatch = block.match(/class="result__snippet"[^>]*>([^<]+)/);
-
-      if (urlMatch && titleMatch) {
-        let url = urlMatch[1].trim();
-        // Clean up URL
-        if (url.startsWith("//")) url = "https:" + url;
-        if (!url.startsWith("http")) url = "https://" + url;
-
-        results.push({
-          title: titleMatch[1].trim().replace(/<[^>]*>/g, ""),
-          snippet: (snippetMatch?.[1] || "").trim().replace(/<[^>]*>/g, "").slice(0, 500),
-          url,
-          domain: getDomain(url),
-          score: 0,
-        });
-      }
+    while ((match = linkRegex.exec(html)) !== null) {
+      links.push({ url: match[1].trim(), title: match[2].trim() });
     }
 
-    console.log(`[WebSearch] DuckDuckGo HTML returned ${results.length} results`);
-    return results;
-  } catch (err) {
-    console.warn(`[WebSearch] DuckDuckGo HTML failed: ${(err as Error).message?.slice(0, 60)}`);
-    return [];
-  }
-}
+    while ((match = snippetRegex.exec(html)) !== null) {
+      snippets.push(match[1].trim().replace(/<[^>]*>/g, "").slice(0, 500));
+    }
 
-// ─────────────────────────────────────────────
-// 6. DUCKDUCKGO JSON FALLBACK
-// ─────────────────────────────────────────────
+    for (let i = 0; i < Math.min(links.length, maxResults); i++) {
+      let url = links[i].url;
+      if (url.startsWith("//")) url = "https:" + url;
+      if (!url.startsWith("http")) url = "https://" + url;
 
-async function searchDuckDuckGoJSON(query: string, maxResults: number): Promise<SearchResult[]> {
-  try {
-    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-    const res = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    const results: SearchResult[] = [];
-    if (data.AbstractText && data.AbstractURL) {
       results.push({
-        title: data.Heading || query,
-        snippet: data.AbstractText.slice(0, 500),
-        url: data.AbstractURL,
-        domain: getDomain(data.AbstractURL),
-        score: 80,
+        title: links[i].title || "Untitled",
+        snippet: snippets[i] || "",
+        url,
+        domain: getDomain(url),
+        score: 0,
       });
     }
-    for (const t of (data.RelatedTopics || []).slice(0, maxResults)) {
-      if (t.Text && t.FirstURL) {
-        results.push({
-          title: t.Text.slice(0, 100),
-          snippet: t.Text.slice(0, 500),
-          url: t.FirstURL,
-          domain: getDomain(t.FirstURL),
-          score: 50,
-        });
-      }
-    }
-    console.log(`[WebSearch] DuckDuckGo JSON returned ${results.length} results`);
+
+    console.log(`[WebSearch] DuckDuckGo Lite returned ${results.length} results`);
     return results;
   } catch (err) {
-    console.warn(`[WebSearch] DuckDuckGo JSON failed: ${(err as Error).message?.slice(0, 60)}`);
+    console.warn(`[WebSearch] DuckDuckGo Lite failed: ${(err as Error).message?.slice(0, 60)}`);
     return [];
   }
 }
@@ -348,25 +352,32 @@ export async function searchWeb(question: string, maxResults = 8): Promise<Searc
 
   const allResults: SearchResult[] = [];
 
-  // Strategy 1: Try SearXNG (all queries in parallel)
-  const searxngPromises = queries.map((q) => searchSearXNG(q, 5));
-  const searxngOutcomes = await Promise.allSettled(searxngPromises);
-  for (const o of searxngOutcomes) {
-    if (o.status === "fulfilled") allResults.push(...o.value);
+  // Strategy 1: Try SearXNG (free, no API key needed)
+  console.log("[WebSearch] Trying SearXNG...");
+  for (const q of queries) {
+    const searxResults = await searchSearXNG(q, 5);
+    allResults.push(...searxResults);
   }
 
-  // Strategy 2: If SearXNG failed, try DuckDuckGo HTML (more reliable)
-  if (allResults.length === 0) {
-    console.log("[WebSearch] SearXNG failed, trying DuckDuckGo HTML...");
-    const ddgHtmlResults = await searchDuckDuckGoHTML(queries[0], 8);
-    allResults.push(...ddgHtmlResults);
+  // Strategy 2: If SearXNG failed, try Google Custom Search API
+  if (allResults.length < 3) {
+    const { apiKey, cseId } = getGoogleCSEConfig();
+    if (apiKey && cseId) {
+      console.log("[WebSearch] Trying Google Custom Search API...");
+      for (const q of queries) {
+        const googleResults = await searchGoogle(q, 5);
+        allResults.push(...googleResults);
+      }
+    }
   }
 
-  // Strategy 3: If DDG HTML also failed, try DDG JSON
-  if (allResults.length === 0) {
-    console.log("[WebSearch] DuckDuckGo HTML failed, trying DuckDuckGo JSON...");
-    const ddgJsonResults = await searchDuckDuckGoJSON(queries[0], 5);
-    allResults.push(...ddgJsonResults);
+  // Strategy 3: If still not enough, try DuckDuckGo Lite
+  if (allResults.length < 3) {
+    console.log("[WebSearch] Trying DuckDuckGo Lite fallback...");
+    for (const q of queries) {
+      const ddgResults = await searchDuckDuckGoLite(q, 5);
+      allResults.push(...ddgResults);
+    }
   }
 
   console.log(`[WebSearch] Total raw: ${allResults.length}`);

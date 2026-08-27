@@ -46,15 +46,35 @@ export interface TelegramUpdate {
 export async function processTelegramMessage(
   update: TelegramUpdate,
   agent: AgentConfig,
-  aiHandler: (message: string, history: Array<{ role: string; content: string }>) => Promise<string>
+  aiHandler: (
+    message: string,
+    history: Array<{ role: string; content: string }>,
+    imageBase64?: string
+  ) => Promise<string>
 ): Promise<void> {
   const message = update.message;
-  if (!message?.text) return;
+  if (!message) return;
 
   const chatId = message.chat.id;
   const userId = message.from.id.toString();
   const userName = message.from.first_name;
-  const text = message.text;
+  const text = message.text || "";
+  const caption = (message as any).caption || "";
+
+  // Handle photos (image understanding)
+  if (message.photo && message.photo.length > 0) {
+    await handlePhotoMessage(chatId, message, agent, userId, userName, aiHandler);
+    return;
+  }
+
+  // Handle documents (image files)
+  if (message.document && isImageMime(message.document.mime_type)) {
+    await handleDocumentMessage(chatId, message, agent, userId, userName, aiHandler);
+    return;
+  }
+
+  // Handle text messages
+  if (!text) return;
 
   // Handle commands
   if (text.startsWith("/")) {
@@ -94,9 +114,95 @@ export async function processTelegramMessage(
     await sendTelegramMessage(
       chatId,
       agent.botToken!,
-      "Sorry, I'm experiencing technical difficulties. Please try again later."
+      "សូមអភ័យទោស ប្រព័ន្ធមានបញ្ហាបណ្ដោះអាសន្ន។ សូមព្យាយាមម្ដងទៀត។"
     );
   }
+}
+
+// ============ Photo Message Handler ============
+
+async function handlePhotoMessage(
+  chatId: number,
+  message: any,
+  agent: AgentConfig,
+  userId: string,
+  userName: string,
+  aiHandler: (
+    message: string,
+    history: Array<{ role: string; content: string }>,
+    imageBase64?: string
+  ) => Promise<string>
+): Promise<void> {
+  try {
+    await sendTelegramTyping(chatId, agent.botToken!);
+
+    // Get the largest photo
+    const photos = message.photo || [];
+    const largestPhoto = photos[photos.length - 1];
+    if (!largestPhoto?.file_id) {
+      await sendTelegramMessage(chatId, agent.botToken!, "មិនអាចទាញរូបភាពបាន។");
+      return;
+    }
+
+    // Download photo from Telegram
+    console.log(`[Telegram] Downloading photo for user ${userId}...`);
+    const imageBase64 = await downloadTelegramFile(largestPhoto.file_id, agent.botToken!);
+    
+    if (!imageBase64) {
+      await sendTelegramMessage(chatId, agent.botToken!, "មិនអាចទាញរូបភាពបាន។ សូមព្យាយាមម្ដងទៀត។");
+      return;
+    }
+
+    // Get caption text or default prompt
+    const userMessage = message.caption || "វិភាគរូបភាពនេះ។ ប្រាប់ខ្ញុំពីអ្វីដែលអ្នកឃើញក្នុងរូបភាពនេះ។";
+
+    // Get conversation context
+    const conv = getOrCreateConversation(agent.id, "telegram", userId, userName);
+    addMessageToConversation(conv.id, "user", `[📷 រូបភាព] ${userMessage}`);
+
+    const history = conv.messages.slice(-10).map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    console.log(`[Telegram] Analyzing image with AI for user ${userId}...`);
+    
+    // Get AI response with image
+    const aiResponse = await aiHandler(userMessage, history, imageBase64);
+    addMessageToConversation(conv.id, "assistant", aiResponse);
+
+    await sendTelegramMessage(chatId, agent.botToken!, aiResponse);
+    console.log(`[Telegram] AI analyzed image for ${userId}`);
+  } catch (err) {
+    console.error(`[Telegram] Photo analysis error for ${userId}:`, err);
+    await sendTelegramMessage(
+      chatId,
+      agent.botToken!,
+      "មិនអាចវិភាគរូបភាពបាន។ សូមព្យាយាមម្ដងទៀត។"
+    );
+  }
+}
+
+// ============ Document Message Handler ============
+
+async function handleDocumentMessage(
+  chatId: number,
+  message: any,
+  agent: AgentConfig,
+  userId: string,
+  userName: string,
+  aiHandler: (
+    message: string,
+    history: Array<{ role: string; content: string }>,
+    imageBase64?: string
+  ) => Promise<string>
+): Promise<void> {
+  // Treat image documents same as photos
+  await handlePhotoMessage(chatId, {
+    ...message,
+    photo: [{ file_id: message.document.file_id }],
+    caption: message.caption || "វិភាគរូបភាពនេះ។",
+  }, agent, userId, userName, aiHandler);
 }
 
 // ============ Handle Commands ============
@@ -107,7 +213,11 @@ async function handleTelegramCommand(
   agent: AgentConfig,
   userId: string,
   userName: string,
-  aiHandler: (message: string, history: Array<{ role: string; content: string }>) => Promise<string>
+  aiHandler: (
+    message: string,
+    history: Array<{ role: string; content: string }>,
+    imageBase64?: string
+  ) => Promise<string>
 ): Promise<void> {
   const cmd = command.split(" ")[0].toLowerCase();
 
@@ -299,4 +409,60 @@ function splitMessage(text: string, maxLength: number): string[] {
   }
 
   return chunks;
+}
+
+// ============ Image Helpers ============
+
+function isImageMime(mimeType?: string): boolean {
+  if (!mimeType) return false;
+  return [
+    "image/jpeg", "image/png", "image/gif", "image/webp",
+    "image/bmp", "image/tiff",
+  ].includes(mimeType.toLowerCase());
+}
+
+async function downloadTelegramFile(
+  fileId: string,
+  botToken: string
+): Promise<string | null> {
+  try {
+    // Step 1: Get file path from Telegram
+    const fileInfoRes = await fetch(
+      `${TELEGRAM_API}/bot${botToken}/getFile?file_id=${fileId}`
+    );
+    const fileInfo = await fileInfoRes.json();
+
+    if (!fileInfo.ok || !fileInfo.result?.file_path) {
+      console.error("[Telegram] getFile failed:", fileInfo.description);
+      return null;
+    }
+
+    const filePath = fileInfo.result.file_path;
+    const fileSize = fileInfo.result.file_size || 0;
+
+    // Telegram has a 20MB limit for bot downloads
+    if (fileSize > 20 * 1024 * 1024) {
+      console.error("[Telegram] File too large:", fileSize);
+      return null;
+    }
+
+    // Step 2: Download the file
+    const fileUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
+    const fileRes = await fetch(fileUrl);
+
+    if (!fileRes.ok) {
+      console.error("[Telegram] File download failed:", fileRes.status);
+      return null;
+    }
+
+    // Step 3: Convert to base64
+    const arrayBuffer = await fileRes.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString("base64");
+
+    console.log(`[Telegram] Downloaded file: ${filePath} (${(fileSize / 1024).toFixed(1)}KB)`);
+    return base64;
+  } catch (err) {
+    console.error("[Telegram] downloadTelegramFile error:", err);
+    return null;
+  }
 }

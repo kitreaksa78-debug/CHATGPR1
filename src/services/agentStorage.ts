@@ -25,6 +25,8 @@ export interface AgentConfig {
   webhookUrl?: string;
   welcomeMessage?: string;
   systemPrompt?: string;
+  commentReplyPrompt?: string;
+  autoPostPrompt?: string;
   createdAt: number;
   updatedAt: number;
 }
