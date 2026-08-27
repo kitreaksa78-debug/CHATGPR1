@@ -2,18 +2,31 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
+import crypto from "crypto";
 import { getGeminiClient, formatAttachmentsForGemini } from "./src/services/gemini.js";
 import { routeUserRequest } from "./src/services/router.js";
 import { generateAIImage } from "./src/services/imageGeneration.js";
+import { searchWeb, formatSearchResults } from "./src/services/webSearch.js";
+import {
+  getAllAgents, getAgentById, createAgent, updateAgent, deleteAgent,
+  toggleAgent, toggleHumanTakeover, getAgentConversations,
+  getFacebookAgent, getTelegramAgent,
+  getConversationById, addMessageToConversation
+} from "./src/services/agentStorage.js";
+import { verifyFacebookWebhook, processFacebookMessage, setupFacebookWebhook, getFacebookPageInfo, createFacebookPost, processFacebookComment } from "./src/services/facebookAgent.js";
+import { processTelegramMessage, setupTelegramWebhook, getTelegramBotInfo, sendTelegramMessage } from "./src/services/telegramAgent.js";
 import { generateVisualExplanation } from "./src/services/visualExplanation.js";
 import { parseGeminiError } from "./src/services/errorHelper.js";
 import { generateResilientResponse } from "./src/services/fallbackResponder.js";
 import { streamQ8Fallback, testQ8Health } from "./src/services/q8Fallback.js";
+import { routeAndStream } from "./src/services/aiRouter.js";
 
 dotenv.config();
+dotenv.config({ path: ".env.local" });
 
 const app = express();
 const PORT = 3000;
+const TELEGRAM_API = "https://api.telegram.org";
 
 // Body Parsers with large limit for base64 image/file uploads
 app.use(express.json({ limit: "50mb" }));
@@ -26,6 +39,110 @@ app.get("/api/health", (req, res) => {
     service: "CHAT GPR Multimodal AI Engine",
     time: new Date().toISOString(),
   });
+});
+
+// Google OAuth Configuration
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
+
+// Helper to detect base URL from request
+function getBaseUrl(req: express.Request): string {
+  const proto = req.headers["x-forwarded-proto"] as string || req.protocol;
+  const host = req.headers["x-forwarded-host"] as string || req.headers.host;
+  return `${proto}://${host}`;
+}
+
+// Google OAuth: Redirect to Google consent screen
+app.get("/api/auth/google", (req, res) => {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+    return res.redirect("/#/login?error=no_google_config");
+  }
+
+  const baseUrl = getBaseUrl(req);
+  const redirectUri = `${baseUrl}/api/auth/google/callback`;
+  const state = crypto.randomBytes(16).toString("hex");
+
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: "openid email profile",
+    access_type: "offline",
+    prompt: "consent",
+    state,
+  });
+
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+
+// Google OAuth: Handle callback
+app.get("/api/auth/google/callback", async (req, res) => {
+  const { code, error } = req.query;
+
+  if (error || !code) {
+    return res.redirect(`/#/login?error=${error || "no_code"}`);
+  }
+
+  try {
+    const baseUrl = getBaseUrl(req);
+    const redirectUri = `${baseUrl}/api/auth/google/callback`;
+
+    // Exchange authorization code for tokens
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code: code as string,
+        client_id: GOOGLE_CLIENT_ID!,
+        client_secret: GOOGLE_CLIENT_SECRET!,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      }),
+    });
+
+    const tokenData = await tokenResponse.json();
+
+    if (tokenData.error) {
+      console.error("[Auth] Token exchange error:", tokenData.error);
+      return res.redirect("/#/login?error=token_exchange_failed");
+    }
+
+    // Get user info
+    const userResponse = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+
+    const userData = await userResponse.json();
+
+    if (!userData.email) {
+      return res.redirect("/#/login?error=no_email");
+    }
+
+    // Create session data
+    const sessionData = {
+      user: {
+        id: userData.id,
+        email: userData.email,
+        name: userData.name,
+        picture: userData.picture,
+      },
+      accessToken: tokenData.access_token,
+      expiresAt: Date.now() + (tokenData.expires_in || 3600) * 1000,
+    };
+
+    // Redirect to chat with session data in query string (outside hash)
+    const encodedSession = encodeURIComponent(JSON.stringify(sessionData));
+    res.redirect(`/?session=${encodedSession}#/chat`);
+  } catch (err) {
+    console.error("[Auth] Callback error:", err);
+    return res.redirect("/?error=auth_failed#/login");
+  }
+});
+
+// Logout endpoint
+app.post("/api/auth/logout", (req, res) => {
+  res.json({ success: true });
 });
 
 // 1. Streaming Chat & Multimodal Routing Endpoint
@@ -55,6 +172,31 @@ app.post("/api/chat/stream", async (req, res) => {
 
   // Send initial intent event
   res.write(`data: ${JSON.stringify({ type: "intent", intent: route.intent, isVisualExplanation: route.isVisualExplanation })}\n\n`);
+
+  // Send search status events for web search queries — multi-stage feedback
+  if (route.isWebSearch) {
+    const lang = route.language;
+    const searchingMsg = lang === "km"
+      ? "🔎 កំពុងស្វែងរកព័ត៌មានក្នុងវ៉ិប..."
+      : "🔎 Searching the web...";
+    const rewritingMsg = lang === "km"
+      ? "✏️ កំពុងរៀបចំសំណួរស្វែងរក..."
+      : "✏️ Rewriting search queries...";
+    const analyzingMsg = lang === "km"
+      ? "🧠 កំពុងវិភាគប្រភពព័ត៌មាន..."
+      : "🧠 Analyzing sources...";
+    const verifyingMsg = lang === "km"
+      ? "✅ កំពុងផ្ទៀងផ្ទាត់ព័ត៌មាន..."
+      : "✅ Verifying information...";
+
+    res.write(`data: ${JSON.stringify({ type: "search_status", status: "searching", message: rewritingMsg })}\n\n`);
+    await new Promise((r) => setTimeout(r, 400));
+    res.write(`data: ${JSON.stringify({ type: "search_status", status: "searching", message: searchingMsg })}\n\n`);
+    await new Promise((r) => setTimeout(r, 600));
+    res.write(`data: ${JSON.stringify({ type: "search_status", status: "analyzing", message: analyzingMsg })}\n\n`);
+    await new Promise((r) => setTimeout(r, 400));
+    res.write(`data: ${JSON.stringify({ type: "search_status", status: "verifying", message: verifyingMsg })}\n\n`);
+  }
 
   // Handle Pure Artistic Image Generation or Conversational Image Editing
   if (route.isImageGeneration) {
@@ -197,7 +339,17 @@ Your mission is to deliver deeply insightful, exceptionally helpful, beautifully
    - 🌐 **Real-time Research**: Provide up-to-date, objective, and well-cited information when web search is enabled.
 
 5. **Visual Explanations & Diagrams**:
-   - When a concept is explained with an educational diagram or flowchart, provide a detailed textual breakdown explaining each component and stage step-by-step under '### ពន្យល់ពីរូបភាព'.`;
+   - When a concept is explained with an educational diagram or flowchart, provide a detailed textual breakdown explaining each component and stage step-by-step under '### ពន្យល់ពីរូបភាព'.
+
+6. **Web Search & Citation Excellence** (when search results are provided):
+   - NEVER simply copy or paraphrase search result snippets verbatim.
+   - Understand the information from multiple sources, cross-reference, then synthesize a clear, accurate answer.
+   - Cite sources inline using [1], [2], etc. immediately after the claim they support.
+   - Prioritize sources marked [⭐ Official/Primary] or [✓ Reliable] for factual accuracy.
+   - If sources disagree on facts, clearly note the discrepancy and explain which source is more authoritative.
+   - If search results are insufficient to answer confidently, say so honestly — do NOT fabricate information.
+   - At the end of your answer, include a concise 'Sources:' section listing the 3-5 most relevant URLs.
+   - Answer in the SAME language as the user asked.`;
 
     // Format previous conversation history
     const contents: any[] = [];
@@ -218,13 +370,28 @@ Your mission is to deliver deeply insightful, exceptionally helpful, beautifully
       }
     }
 
-    // Add current user turn
+    // Perform web search if search intent is active
+    let searchContext = "";
+    if (route.isWebSearch) {
+      try {
+        console.log(`[WebSearch] Searching for: ${prompt.slice(0, 50)}`);
+        const searchResults = await searchWeb(prompt, 5);
+        searchContext = formatSearchResults(searchResults);
+        console.log(`[WebSearch] Found ${searchResults.length} results, context length: ${searchContext.length}`);
+      } catch (searchErr) {
+        console.warn("[WebSearch] Error:", searchErr);
+      }
+    }
+
+    // Add current user turn with search context if available
     const currentParts: any[] = [];
     if (attachments && attachments.length > 0) {
       currentParts.push(...formatAttachmentsForGemini(attachments));
     }
     if (prompt) {
-      currentParts.push({ text: prompt });
+      const promptWithSearch = searchContext ? prompt + searchContext : prompt;
+      console.log(`[WebSearch] Prompt length: ${prompt.length}, With search: ${promptWithSearch.length}`);
+      currentParts.push({ text: promptWithSearch });
     }
     contents.push({
       role: "user",
@@ -237,141 +404,32 @@ Your mission is to deliver deeply insightful, exceptionally helpful, beautifully
       temperature: route.isMathOrReasoning || route.isCoding ? 0.2 : 0.7,
     };
 
-    // Add Google Search grounding tool if search intent is active
-    if (route.isWebSearch) {
-      config.tools = [{ googleSearch: {} }];
-    }
-
-    // High availability model cascade prioritized for stability, high quota, and instant speed
-    const TEXT_MODELS = [
-      "gemini-3.5-flash-lite",
-      "gemini-3.6-flash",
-      "gemini-3.1-flash-lite",
-      "gemini-flash-latest",
-      "gemini-3.1-pro-preview",
-      "gemini-3.7-flash",
-    ];
-
-    let streamCompleted = false;
-    let lastError: any = null;
-    let fullText = "";
+    // ═══════════════════════════════════════════════════════════════
+    // AI ROUTER: Multi-provider cascade with circuit breaker
+    // Gemini (6 models) → Pollinations.ai (free) → Q8_K_XL → Knowledge Engine
+    // ═══════════════════════════════════════════════════════════════
     let groundingSources: any[] = [];
+    let fullText = "";
 
-    for (let i = 0; i < TEXT_MODELS.length; i++) {
-      const modelName = TEXT_MODELS[i];
-      try {
-        const responseStream = await ai.models.generateContentStream({
-          model: modelName,
-          contents,
-          config,
-        });
+    const routerResult = await routeAndStream({
+      contents,
+      config,
+      systemInstruction: baseSystemInstruction,
+      prompt,
+      history: messages.slice(-8),
+      timeoutMs: 30_000,
+      callbacks: {
+        onToken: (token) => {
+          fullText += token;
+          res.write(`data: ${JSON.stringify({ type: "token", text: token })}\n\n`);
+        },
+        onModelInfo: (model, isFallback) => {
+          res.write(`data: ${JSON.stringify({ type: "model_info", modelUsed: model, isFallback })}\n\n`);
+        },
+      },
+    });
 
-        for await (const chunk of responseStream) {
-          const text = chunk.text;
-          if (text) {
-            fullText += text;
-            res.write(`data: ${JSON.stringify({ type: "token", text })}\n\n`);
-          }
-
-          // Extract search grounding metadata if available
-          const searchChunks = chunk.candidates?.[0]?.groundingMetadata?.groundingChunks;
-          if (searchChunks && Array.isArray(searchChunks)) {
-            for (const sc of searchChunks) {
-              if (sc.web?.uri && sc.web?.title) {
-                if (!groundingSources.some((s) => s.uri === sc.web.uri)) {
-                  groundingSources.push({
-                    title: sc.web.title,
-                    uri: sc.web.uri,
-                  });
-                }
-              }
-            }
-          }
-        }
-
-        streamCompleted = true;
-        break;
-      } catch (err: any) {
-        lastError = err;
-
-        if (fullText.length > 0) {
-          streamCompleted = true;
-          break;
-        }
-
-        // If grounding failed on this model, attempt without grounding tool immediately
-        if (config.tools && config.tools.length > 0) {
-          try {
-            const fallbackConfig = { ...config, tools: undefined };
-            const responseStream = await ai.models.generateContentStream({
-              model: modelName,
-              contents,
-              config: fallbackConfig,
-            });
-
-            for await (const chunk of responseStream) {
-              const text = chunk.text;
-              if (text) {
-                fullText += text;
-                res.write(`data: ${JSON.stringify({ type: "token", text })}\n\n`);
-              }
-            }
-
-            streamCompleted = true;
-            break;
-          } catch (fallbackErr) {
-            lastError = fallbackErr;
-          }
-        }
-
-        // Delay before falling back to next model
-        if (i < TEXT_MODELS.length - 1) {
-          await new Promise((r) => setTimeout(r, 150));
-        }
-      }
-    }
-
-    // If Gemini models failed (429/500/502/503/timeout/network), activate OpenAI-Compatible Q8_K_XL Fallback
-    if (!streamCompleted && fullText.length === 0 && settings.enableFallbackQ8 !== false) {
-      let fallbackEndpoint = settings.fallbackEndpointUrl || process.env.FALLBACK_ENDPOINT_URL || "https://hadadrjt-api.hf.space/v1";
-      if (fallbackEndpoint.includes("localhost") || fallbackEndpoint.includes("127.0.0.1")) {
-        fallbackEndpoint = "https://hadadrjt-api.hf.space/v1";
-      }
-      const fallbackModel = settings.fallbackModelName || process.env.FALLBACK_MODEL || "Q8_K_XL";
-      
-      try {
-        console.log(`[CHAT GPR] Gemini unavailable (${lastError?.message?.slice(0, 80)}...). Cascading to OpenAI-compatible Q8_K_XL Fallback (${fallbackEndpoint} -> ${fallbackModel})...`);
-        const q8Result = await streamQ8Fallback({
-          endpointUrl: fallbackEndpoint,
-          modelName: fallbackModel,
-          prompt,
-          systemInstruction: baseSystemInstruction,
-          history: messages.slice(-8),
-          onToken: (token) => {
-            fullText += token;
-            res.write(`data: ${JSON.stringify({ type: "token", text: token, modelUsed: `${fallbackModel} (OpenAI Compatible)`, isFallback: true })}\n\n`);
-          },
-        });
-
-        if (q8Result.success && fullText.length > 0) {
-          streamCompleted = true;
-          res.write(`data: ${JSON.stringify({ type: "model_info", modelUsed: `${fallbackModel} (OpenAI Compatible)`, isFallback: true })}\n\n`);
-        } else if (q8Result.error) {
-          console.warn("[CHAT GPR] Q8_K_XL fallback reported:", q8Result.error);
-        }
-      } catch (q8Err: any) {
-        console.log("[CHAT GPR] Q8_K_XL endpoint error:", q8Err?.message || q8Err);
-      }
-    }
-
-    if (!streamCompleted && fullText.length === 0) {
-      // If Q8_K_XL is also offline or unavailable, synthesize instantaneous resilient response
-      const fallbackText = generateResilientResponse(prompt, lastError?.message);
-      fullText = fallbackText;
-      res.write(`data: ${JSON.stringify({ type: "token", text: fallbackText, modelUsed: "CHAT GPR Knowledge Engine", isFallback: true })}\n\n`);
-      res.write(`data: ${JSON.stringify({ type: "model_info", modelUsed: "CHAT GPR Knowledge Engine", isFallback: true })}\n\n`);
-      streamCompleted = true;
-    }
+    fullText = routerResult.fullText;
 
     // If visual explanation was requested, await and stream the ready visual
     if (visualPromise) {
@@ -510,6 +568,484 @@ app.post("/api/fallback/test", async (req, res) => {
       error: err?.message || "Unknown error",
       isReady: false,
     });
+  }
+});
+
+// ============ AI AGENT ENDPOINTS ============
+
+// Agent CRUD
+app.get("/api/agents", (req, res) => {
+  const agents = getAllAgents();
+  // Don't expose tokens to frontend
+  const safeAgents = agents.map(a => ({
+    ...a,
+    pageAccessToken: a.pageAccessToken ? "***" : undefined,
+    botToken: a.botToken ? "***" : undefined,
+    appSecret: a.appSecret ? "***" : undefined,
+  }));
+  res.json({ agents: safeAgents });
+});
+
+app.get("/api/agents/:id", (req, res) => {
+  const agent = getAgentById(req.params.id);
+  if (!agent) return res.status(404).json({ error: "Agent not found" });
+  res.json({
+    ...agent,
+    pageAccessToken: agent.pageAccessToken ? "***" : undefined,
+    botToken: agent.botToken ? "***" : undefined,
+    appSecret: agent.appSecret ? "***" : undefined,
+  });
+});
+
+app.post("/api/agents", (req, res) => {
+  const { platform, pageAccessToken, botToken, appSecret, verifyToken, welcomeMessage, systemPrompt } = req.body;
+  
+  if (!platform || !"facebook".includes(platform) && !"telegram".includes(platform)) {
+    return res.status(400).json({ error: "Invalid platform" });
+  }
+
+  const agent = createAgent({
+    platform,
+    enabled: false,
+    humanTakeover: false,
+    pageAccessToken,
+    botToken,
+    appSecret,
+    verifyToken: verifyToken || `verify_${Date.now()}`,
+    welcomeMessage: welcomeMessage || "👋 Welcome! How can I help you?",
+    systemPrompt,
+  });
+
+  res.json({ agent: { ...agent, pageAccessToken: "***", botToken: "***", appSecret: "***" } });
+});
+
+app.put("/api/agents/:id", (req, res) => {
+  const { pageAccessToken, botToken, appSecret, ...updates } = req.body;
+  const agent = updateAgent(req.params.id, {
+    ...updates,
+    ...(pageAccessToken && { pageAccessToken }),
+    ...(botToken && { botToken }),
+    ...(appSecret && { appSecret }),
+  });
+  if (!agent) return res.status(404).json({ error: "Agent not found" });
+  res.json({ agent: { ...agent, pageAccessToken: "***", botToken: "***", appSecret: "***" } });
+});
+
+app.delete("/api/agents/:id", (req, res) => {
+  const deleted = deleteAgent(req.params.id);
+  if (!deleted) return res.status(404).json({ error: "Agent not found" });
+  res.json({ success: true });
+});
+
+app.post("/api/agents/:id/toggle", (req, res) => {
+  const agent = toggleAgent(req.params.id);
+  if (!agent) return res.status(404).json({ error: "Agent not found" });
+  res.json({ agent: { ...agent, pageAccessToken: "***", botToken: "***", appSecret: "***" } });
+});
+
+app.post("/api/agents/:id/human-takeover", (req, res) => {
+  const agent = toggleHumanTakeover(req.params.id);
+  if (!agent) return res.status(404).json({ error: "Agent not found" });
+  res.json({ agent: { ...agent, pageAccessToken: "***", botToken: "***", appSecret: "***" } });
+});
+
+app.get("/api/agents/:id/conversations", (req, res) => {
+  const convs = getAgentConversations(req.params.id);
+  res.json({ conversations: convs });
+});
+
+// Reply to a Telegram/Facebook user from the dashboard
+app.post("/api/agents/:id/reply", async (req, res) => {
+  const { userId, message } = req.body;
+  if (!userId || !message) {
+    return res.status(400).json({ error: "userId and message are required" });
+  }
+
+  const agent = getAgentById(req.params.id);
+  if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+  try {
+    if (agent.platform === "telegram" && agent.botToken) {
+      // Send via Telegram Bot API
+      const response = await fetch(`${TELEGRAM_API}/bot${agent.botToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: userId,
+          text: message.slice(0, 4096),
+        }),
+      });
+      const data = await response.json();
+      if (data.ok) {
+        // Add admin message to conversation
+        const { addMessageToConversation } = await import("./src/services/agentStorage.js");
+        const convs = getAgentConversations(agent.id);
+        const conv = convs.find((c) => c.userId === userId);
+        if (conv) {
+          addMessageToConversation(conv.id, "assistant", message);
+        }
+        res.json({ success: true });
+      } else {
+        console.error("[Telegram] Send error:", data.description);
+        res.status(500).json({ error: data.description || "Failed to send message" });
+      }
+    } else if (agent.platform === "facebook" && agent.pageAccessToken) {
+      // Send via Facebook Graph API
+      const { sendFacebookMessage } = await import("./src/services/facebookAgent.js");
+      const sent = await sendFacebookMessage(userId, agent.pageAccessToken, message);
+      if (sent) {
+        const { addMessageToConversation } = await import("./src/services/agentStorage.js");
+        const convs = getAgentConversations(agent.id);
+        const conv = convs.find((c) => c.userId === userId);
+        if (conv) {
+          addMessageToConversation(conv.id, "assistant", message);
+        }
+        res.json({ success: true });
+      } else {
+        res.status(500).json({ error: "Failed to send message" });
+      }
+    } else {
+      res.status(400).json({ error: "Agent not configured for messaging" });
+    }
+  } catch (err: any) {
+    console.error("[Agent Reply Error]", err.message);
+    res.status(500).json({ error: "Failed to send message" });
+  }
+});
+
+// Update Agent Settings
+app.put("/api/agents/:id", (req, res) => {
+  const { welcomeMessage, systemPrompt, commentReplyPrompt, autoPostPrompt, botToken, pageAccessToken } = req.body;
+  const updates: any = {};
+  if (welcomeMessage !== undefined) updates.welcomeMessage = welcomeMessage;
+  if (systemPrompt !== undefined) updates.systemPrompt = systemPrompt;
+  if (commentReplyPrompt !== undefined) updates.commentReplyPrompt = commentReplyPrompt;
+  if (autoPostPrompt !== undefined) updates.autoPostPrompt = autoPostPrompt;
+  if (botToken !== undefined) updates.botToken = botToken;
+  if (pageAccessToken !== undefined) updates.pageAccessToken = pageAccessToken;
+
+  const updated = updateAgent(req.params.id, updates);
+  if (updated) {
+    res.json({ success: true, agent: { ...updated, botToken: updated.botToken ? "***" : undefined, pageAccessToken: updated.pageAccessToken ? "***" : undefined } });
+  } else {
+    res.status(404).json({ error: "Agent not found" });
+  }
+});
+
+// ============ FACEBOOK WEBHOOK ============
+
+app.get("/api/webhook/facebook", (req, res) => {
+  const mode = req.query["hub.mode"] as string;
+  const token = req.query["hub.verify_token"] as string;
+  const challenge = req.query["hub.challenge"] as string;
+
+  const agent = getFacebookAgent();
+  if (!agent?.verifyToken) {
+    return res.status(403).json({ error: "Facebook agent not configured" });
+  }
+
+  const result = verifyFacebookWebhook(mode, token, challenge, agent.verifyToken);
+  if (result) {
+    res.send(result);
+  } else {
+    res.status(403).json({ error: "Verification failed" });
+  }
+});
+
+app.post("/api/webhook/facebook", async (req, res) => {
+  res.sendStatus(200); // Acknowledge immediately
+
+  const agent = getFacebookAgent();
+  if (!agent?.enabled || !agent.pageAccessToken) return;
+
+  // Verify signature if app secret is configured
+  if (agent.appSecret) {
+    const signature = req.headers["x-hub-signature-256"] as string;
+    const body = JSON.stringify(req.body);
+    // Note: In production, use proper signature verification
+  }
+
+  try {
+    await processFacebookMessage(req.body, agent, async (message, history) => {
+      // Use AI Router with fallbacks for maximum reliability
+      let fullText = "";
+      const result = await routeAndStream({
+        contents: history.map(h => ({
+          role: h.role === "assistant" ? "model" : "user",
+          parts: [{ text: h.content }],
+        })).concat([{ role: "user", parts: [{ text: message }] }]),
+        config: {
+          systemInstruction: agent.systemPrompt || "You are a helpful AI assistant for a phone store. Answer concisely and friendly in Khmer when the user writes in Khmer.",
+          temperature: 0.7,
+        },
+        systemInstruction: agent.systemPrompt || "You are a helpful AI assistant.",
+        prompt: message,
+        history,
+        callbacks: {
+          onToken: (token) => { fullText += token; },
+        },
+        timeoutMs: 15_000,
+      });
+      return result.fullText || "I'm sorry, I couldn't generate a response.";
+    });
+  } catch (err) {
+    console.error("[Facebook Webhook Error]", err);
+  }
+});
+
+app.post("/api/agents/facebook/setup", async (req, res) => {
+  const agent = getFacebookAgent();
+  if (!agent?.pageAccessToken) {
+    return res.status(400).json({ error: "Facebook agent not configured" });
+  }
+
+  const baseUrl = getBaseUrl(req);
+  const webhookUrl = `${baseUrl}/api/webhook/facebook`;
+  const success = await setupFacebookWebhook(agent.pageAccessToken, webhookUrl, agent.verifyToken!);
+
+  if (success) {
+    updateAgent(agent.id, { webhookUrl });
+    res.json({ success: true, webhookUrl });
+  } else {
+    res.status(500).json({ error: "Failed to setup webhook" });
+  }
+});
+
+app.post("/api/agents/facebook/verify-token", async (req, res) => {
+  const { pageAccessToken } = req.body;
+  if (!pageAccessToken) {
+    return res.status(400).json({ error: "Page access token required" });
+  }
+
+  const pageInfo = await getFacebookPageInfo(pageAccessToken);
+  if (pageInfo) {
+    res.json({ valid: true, page: pageInfo });
+  } else {
+    res.json({ valid: false, error: "Invalid token or page not found" });
+  }
+});
+
+// ============ FACEBOOK AUTO-POST ============
+
+app.post("/api/agents/facebook/post", async (req, res) => {
+  const agent = getFacebookAgent();
+  if (!agent?.pageAccessToken) {
+    return res.status(400).json({ error: "Facebook agent not configured" });
+  }    const { message, link, imageUrl, useAI, aiPrompt } = req.body;
+    const effectivePrompt = aiPrompt || (useAI ? agent.autoPostPrompt : undefined);
+    if (!message && !effectivePrompt) {
+      return res.status(400).json({ error: "Message or AI prompt is required" });
+    }
+
+  try {
+    let postMessage = message;
+
+    // If useAI is true or effectivePrompt exists, generate the post content using AI Router
+    if (effectivePrompt) {
+      const { routeAndStream } = await import("./src/services/aiRouter.js");
+      let fullText = "";
+      await routeAndStream({
+        contents: [{ role: "user", parts: [{ text: `Generate a professional Facebook post for this topic: ${effectivePrompt}. Keep it engaging, use emojis, and write in Khmer if the prompt is in Khmer. Do NOT include quotes around the post.` }] }],
+        config: { temperature: 0.8 },
+        systemInstruction: agent.autoPostPrompt || "You are a social media expert. Generate engaging Facebook posts.",
+        prompt: effectivePrompt,
+        history: [],
+        callbacks: { onToken: (token) => { fullText += token; } },
+        timeoutMs: 15000,
+      });
+      postMessage = fullText || message;
+    }
+
+    if (!postMessage) {
+      return res.status(400).json({ error: "Could not generate post content" });
+    }
+
+    const result = await createFacebookPost({
+      pageAccessToken: agent.pageAccessToken,
+      message: postMessage,
+      link,
+      imageUrl,
+    });
+
+    if (result.success) {
+      console.log(`[Facebook] Post created: ${result.postId}`);
+      res.json({ success: true, postId: result.postId, message: postMessage });
+    } else {
+      res.status(500).json({ error: result.error || "Failed to create post" });
+    }
+  } catch (err: any) {
+    console.error("[Facebook] Post error:", err.message);
+    res.status(500).json({ error: "Failed to create post" });
+  }
+});
+
+// ============ FACEBOOK COMMENT WEBHOOK ============
+
+app.get("/api/webhook/facebook/comments", (req, res) => {
+  // Comment webhook verification uses the same GET verification as messages
+  const mode = req.query["hub.mode"] as string;
+  const token = req.query["hub.verify_token"] as string;
+  const challenge = req.query["hub.challenge"] as string;
+
+  const agent = getFacebookAgent();
+  if (!agent?.verifyToken) {
+    return res.status(403).json({ error: "Facebook agent not configured" });
+  }
+
+  const result = verifyFacebookWebhook(mode, token, challenge, agent.verifyToken);
+  if (result) {
+    res.send(result);
+  } else {
+    res.status(403).json({ error: "Verification failed" });
+  }
+});
+
+app.post("/api/webhook/facebook/comments", async (req, res) => {
+  res.sendStatus(200); // Acknowledge immediately
+
+  const agent = getFacebookAgent();
+  if (!agent?.enabled || !agent.pageAccessToken) return;
+
+  try {
+    await processFacebookComment(req.body, agent, async (message, history) => {
+      const { routeAndStream } = await import("./src/services/aiRouter.js");
+      let fullText = "";
+      const result = await routeAndStream({
+        contents: history.map(h => ({
+          role: h.role === "assistant" ? "model" : "user",
+          parts: [{ text: h.content }],
+        })).concat([{ role: "user", parts: [{ text: message }] }]),
+        config: { temperature: 0.7 },
+        systemInstruction: agent.commentReplyPrompt || agent.systemPrompt || "You are a helpful AI assistant. Reply to comments concisely and friendly. Answer in Khmer if the comment is in Khmer.",
+        prompt: message,
+        history,
+        callbacks: { onToken: (token) => { fullText += token; } },
+        timeoutMs: 15000,
+      });
+      return result.fullText || "Thanks for your comment!";
+    });
+  } catch (err) {
+    console.error("[Facebook Comment Webhook Error]", err);
+  }
+});
+
+// ============ TELEGRAM WEBHOOK ============
+
+app.post("/api/webhook/telegram", async (req, res) => {
+  res.sendStatus(200); // Acknowledge immediately
+
+  const agent = getTelegramAgent();
+  if (!agent?.enabled || !agent.botToken) return;
+
+  try {
+    await processTelegramMessage(req.body, agent, async (message, history, imageBase64?) => {
+      const ai = getGeminiClient();
+
+      // Auto-detect search intent for current info (prices, news, availability)
+      let searchContext = "";
+      const searchKeywords = ["តម្លៃ", "price", "តម្លៃរូបិយវត្ថុ", "ថ្ងៃនេះ", "today", "ឥឡូវ", "now", "2024", "2025", "2026", "new", "ថ្មី", "release", "ចេញ", "ទើប", "just", "available", "ប្រើប្រាស់", "use", "spec", "specs", "features", "លក្ខណៈ", "camera", "កាមេរ៉ា", "battery", "ថ្ម", "screen", "អេក្រង់", "storage", "ផ្ទុក", "ram", "processor", "CPU", "GPU", "iPhone", "Samsung", "Galaxy", "Pixel", "Xiaomi", "OPPO", "vivo", "Huawei"];
+      const needsSearch = searchKeywords.some(kw => message.toLowerCase().includes(kw.toLowerCase()));
+      
+      if (needsSearch && !imageBase64) {
+        try {
+          console.log(`[Telegram] Searching web for: ${message.slice(0, 50)}`);
+          const searchResults = await searchWeb(message, 5);
+          if (searchResults.length > 0) {
+            searchContext = formatSearchResults(searchResults);
+            console.log(`[Telegram] Found ${searchResults.length} search results`);
+          }
+        } catch (searchErr) {
+          console.warn("[Telegram] Web search failed:", searchErr);
+        }
+      }
+
+      const contents: any[] = history.map(h => ({
+        role: h.role === "assistant" ? "model" : "user",
+        parts: [{ text: h.content }],
+      }));
+
+      // Build user message parts
+      const userParts: any[] = [];
+      
+      // Add image if present
+      if (imageBase64) {
+        userParts.push({
+          inlineData: {
+            mimeType: "image/jpeg",
+            data: imageBase64,
+          },
+        });
+        console.log(`[Telegram] Image attached for analysis (${(imageBase64.length / 1024).toFixed(0)}KB base64)`);
+      }
+      
+      // Add text (with search context if available)
+      const finalMessage = searchContext
+        ? `${message}\n\n---\nព័ត៌មានស្វែងរកបាន៖\n${searchContext}\n\n---\nសូមឆ្លើយតបដោយផ្អែកលើព័ត៌មានខាងលើ និងចំណេះដឹងរបស់អ្នក។ ប្រសិនបើព័ត៌មានមិនគ្រប់គ្រាន់ សូមប្រើចំណេះដឹងរបស់អ្នក។ ឆ្លើយជាភាសាដែលអ្នកប្រើប្រើប្រាស់។`
+        : message;
+      userParts.push({ text: finalMessage });
+      contents.push({ role: "user", parts: userParts });
+
+      const systemInstruction = imageBase64
+        ? (agent.systemPrompt || "You are a helpful AI assistant with vision capabilities. Analyze images carefully and describe what you see in detail. Answer in the same language as the user's text prompt. If no text prompt is provided, describe the image comprehensively.")
+        : (agent.systemPrompt || "You are a helpful AI assistant for a phone store. Answer concisely and friendly in Khmer when the user writes in Khmer. Use web search results when available for current prices and information.");
+
+      const models = imageBase64
+        ? ["gemini-3.5-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"] // Vision-capable models
+        : ["gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+
+      for (const modelName of models) {
+        try {
+          const result = await ai.models.generateContent({
+            model: modelName,
+            contents,
+            config: { systemInstruction, temperature: 0.7 },
+          });
+          if (result.text) return result.text;
+        } catch (modelErr: any) {
+          const status = modelErr?.status || modelErr?.statusCode;
+          console.error(`[Telegram] Model ${modelName} failed (${status}):`, modelErr?.message?.slice(0, 100));
+          if (status !== 503 && status !== 429) break; // Non-retryable error
+        }
+      }
+
+      return imageBase64
+        ? "សូមអភ័យទោស មិនអាចវិភាគរូបភាពបាននៅពេលនេះ។ សូមព្យាយាមម្ដងទៀត។"
+        : "I'm experiencing high demand right now. Please try again in a moment.";
+    });
+  } catch (err) {
+    console.error("[Telegram Webhook Error]", err);
+  }
+});
+
+app.post("/api/agents/telegram/setup", async (req, res) => {
+  const agent = getTelegramAgent();
+  if (!agent?.botToken) {
+    return res.status(400).json({ error: "Telegram agent not configured" });
+  }
+
+  const baseUrl = getBaseUrl(req);
+  const webhookUrl = `${baseUrl}/api/webhook/telegram`;
+  const success = await setupTelegramWebhook(agent.botToken, webhookUrl);
+
+  if (success) {
+    updateAgent(agent.id, { webhookUrl });
+    res.json({ success: true, webhookUrl });
+  } else {
+    res.status(500).json({ error: "Failed to setup webhook" });
+  }
+});
+
+app.post("/api/agents/telegram/verify-token", async (req, res) => {
+  const { botToken } = req.body;
+  if (!botToken) {
+    return res.status(400).json({ error: "Bot token required" });
+  }
+
+  const botInfo = await getTelegramBotInfo(botToken);
+  if (botInfo) {
+    res.json({ valid: true, bot: botInfo });
+  } else {
+    res.json({ valid: false, error: "Invalid bot token" });
   }
 });
 

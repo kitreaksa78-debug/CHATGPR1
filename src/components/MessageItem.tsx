@@ -241,6 +241,22 @@ export const MessageItem: React.FC<MessageItemProps> = ({
             />
           )}
 
+          {/* Search Status Loading State */}
+          {message.searchStatus && !message.content && (
+            <div className="flex items-center gap-2.5 p-3 rounded-xl bg-[#141820] border border-[#2A3241] animate-pulse">
+              <div className="w-5 h-5 rounded-md bg-[#6366F1]/20 flex items-center justify-center">
+                {message.searchStatus === "searching" ? (
+                  <Globe className="w-3.5 h-3.5 text-[#818CF8] animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5 text-[#818CF8] animate-pulse" />
+                )}
+              </div>
+              <span className="text-xs text-[#818CF8] font-medium font-khmer">
+                {message.searchMessage}
+              </span>
+            </div>
+          )}
+
           {/* Main Text Content */}
           {message.content && (
             <div className="markdown-body font-khmer text-sm sm:text-[15px] leading-relaxed">

@@ -5,7 +5,6 @@ import {
   Paperclip,
   Mic,
   MicOff,
-  Globe,
   X,
   FileText,
 } from "lucide-react";
@@ -322,23 +321,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
               </button>
 
-              {/* Google Web Search Grounding Toggle */}
-              <button
-                type="button"
-                onClick={onToggleWebSearch}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-khmer font-medium transition-all ${
-                  webSearchEnabled
-                    ? "bg-[#6366F1]/25 border border-[#6366F1] text-[#A5B4FC] shadow-sm shadow-[#6366F1]/30"
-                    : "text-[#94A3B8] hover:text-white hover:bg-[#242933] border border-transparent"
-                }`}
-                title={webSearchEnabled ? "Google Search បើក" : "Google Search បិទ"}
-              >
-                <Globe className={`w-3.5 h-3.5 ${webSearchEnabled ? "text-[#818CF8] animate-pulse" : ""}`} />
-                <span className="hidden xs:inline sm:inline">Search</span>
-                {webSearchEnabled && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
-                )}
-              </button>
+
             </div>
 
             {/* Right: Send or Stop Button */}

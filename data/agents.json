@@ -1,0 +1,15 @@
+[
+  {
+    "platform": "telegram",
+    "enabled": true,
+    "humanTakeover": false,
+    "botToken": "8976156814:AAH3gS2YG6e2pNSNOvm-tz8wr8gWG3l7k7U",
+    "verifyToken": "verify_1787760031987",
+    "welcomeMessage": "👋 Welcome! How can I help you?",
+    "systemPrompt": "អ្នកជា chat gpt",
+    "id": "agent_telegram_1787760031987",
+    "createdAt": 1787760031987,
+    "updatedAt": 1787760036838,
+    "webhookUrl": "https://3000-f35088b8-3fe6-487f-8668-b0fa7a526013.daytonaproxy01.net/api/webhook/telegram"
+  }
+]

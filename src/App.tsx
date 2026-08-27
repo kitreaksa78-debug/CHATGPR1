@@ -6,6 +6,10 @@ import { ChatInput } from "./components/ChatInput.js";
 import { CameraModal } from "./components/CameraModal.js";
 import { ImageViewerModal } from "./components/ImageViewerModal.js";
 import { SettingsModal } from "./components/SettingsModal.js";
+import { AgentDashboard } from "./components/AgentDashboard.js";
+import { WelcomePage } from "./pages/WelcomePage.js";
+import { LoginPage } from "./pages/LoginPage.js";
+import { AuthProvider, useAuth } from "./contexts/AuthContext.js";
 import {
   Conversation,
   Message,
@@ -24,28 +28,78 @@ import {
   setActiveChatId,
 } from "./utils/storage.js";
 
-export default function App() {
+type Route = "welcome" | "login" | "chat";
+
+function getCurrentRoute(): Route {
+  const hash = window.location.hash.replace("#", "").split("/")[1] || "";
+  if (hash === "login") return "login";
+  if (hash === "chat") return "chat";
+  return "welcome";
+}
+
+function AppRouter() {
+  const [route, setRoute] = useState<Route>(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("session") || params.get("error")) return "login";
+    return getCurrentRoute();
+  });
+  const { isAuthenticated, isLoading } = useAuth();
+
+  useEffect(() => {
+    const handler = () => setRoute(getCurrentRoute());
+    window.addEventListener("hashchange", handler);
+    return () => window.removeEventListener("hashchange", handler);
+  }, []);
+
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && (route === "welcome" || route === "login")) {
+      window.location.hash = "#/chat";
+      setRoute("chat");
+    }
+  }, [isLoading, isAuthenticated, route]);
+
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated && route === "chat") {
+      window.location.hash = "#/login";
+      setRoute("login");
+    }
+  }, [isLoading, isAuthenticated, route]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center bg-[#0B0D10]">
+        <div className="w-8 h-8 border-2 border-[#6366F1] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (route === "welcome") return <WelcomePage onGetStarted={() => (window.location.hash = "#/login")} />;
+  if (route === "login") return <LoginPage />;
+  if (route === "chat" && isAuthenticated) return <ChatDashboard />;
+
+  return <WelcomePage onGetStarted={() => (window.location.hash = "#/login")} />;
+}
+
+function ChatDashboard() {
+  const { user, logout } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeChatId, setActiveChatIdState] = useState<string | null>(null);
   const [settings, setSettings] = useState<ChatSettings>(loadSettings);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
 
-  // Modals
   const [isCamOpen, setIsCamOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isAgentDashboardOpen, setIsAgentDashboardOpen] = useState(false);
   const [imageViewerState, setImageViewerState] = useState<{
     isOpen: boolean;
     imageUrl?: string;
     generatedInfo?: GeneratedImage;
     visualExplanationInfo?: VisualExplanation;
-  }>({
-    isOpen: false,
-  });
+  }>({ isOpen: false });
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Initialize conversations from localStorage
   useEffect(() => {
     const loaded = loadConversations();
     if (loaded.length > 0) {
@@ -66,17 +120,14 @@ export default function App() {
     }
   }, []);
 
-  // Save conversations whenever they change
   useEffect(() => {
     if (conversations.length > 0) {
       saveConversations(conversations);
     }
   }, [conversations]);
 
-  const currentConversation =
-    conversations.find((c) => c.id === activeChatId) || null;
+  const currentConversation = conversations.find((c) => c.id === activeChatId) || null;
 
-  // Handlers for conversations
   const handleSelectChat = (id: string) => {
     setActiveChatIdState(id);
     setActiveChatId(id);
@@ -151,10 +202,6 @@ export default function App() {
     saveSettings(updated);
   };
 
-  const handleToggleTemporary = () => {
-    handleNewChat(!currentConversation?.isTemporary);
-  };
-
   const handleFeedback = (messageId: string, liked: boolean) => {
     if (!activeChatId) return;
     setConversations((prev) =>
@@ -170,7 +217,6 @@ export default function App() {
     );
   };
 
-  // Main Send Message Pipeline with SSE
   const handleSendMessage = async (
     text: string,
     attachments: Attachment[] = [],
@@ -206,15 +252,10 @@ export default function App() {
     const updatedMessages = [...targetConv.messages, userMessage, initialAssistantMessage];
     const isFirstUserTurn = targetConv.messages.length === 0;
 
-    // Update conversation in state
     setConversations((prev) =>
       prev.map((c) =>
         c.id === targetConv!.id
-          ? {
-              ...c,
-              messages: updatedMessages,
-              updatedAt: Date.now(),
-            }
+          ? { ...c, messages: updatedMessages, updatedAt: Date.now() }
           : c
       )
     );
@@ -244,7 +285,6 @@ export default function App() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-
       let accumulatedContent = "";
       let detectedIntent: any = undefined;
       let modelUsed: string | undefined = undefined;
@@ -271,6 +311,11 @@ export default function App() {
                 detectedIntent = parsed.intent;
                 updateAssistantMessage(targetConv.id, assistantMessageId, {
                   intent: parsed.intent,
+                });
+              } else if (parsed.type === "search_status") {
+                updateAssistantMessage(targetConv.id, assistantMessageId, {
+                  searchStatus: parsed.status,
+                  searchMessage: parsed.message,
                 });
               } else if (parsed.type === "model_info") {
                 modelUsed = parsed.modelUsed;
@@ -306,6 +351,7 @@ export default function App() {
                   modelUsed,
                   isFallback: isFallbackMsg,
                   isStreaming: true,
+                  searchStatus: null, // Clear search status when content arrives
                 });
               } else if (parsed.type === "grounding") {
                 updateAssistantMessage(targetConv.id, assistantMessageId, {
@@ -345,12 +391,10 @@ export default function App() {
         }
       }
 
-      // Mark done streaming
       updateAssistantMessage(targetConv.id, assistantMessageId, {
         isStreaming: false,
       });
 
-      // Auto Title Generation if this was first message (debounced to avoid burst rate limits)
       if (isFirstUserTurn && settings.autoTitle && !targetConv.isTemporary) {
         setTimeout(() => {
           fetch("/api/title", {
@@ -417,7 +461,6 @@ export default function App() {
     const history = currentConversation.messages.slice(0, index);
     const lastUserMsg = history[history.length - 1];
     if (lastUserMsg && lastUserMsg.role === "user") {
-      // Remove current and downstream assistant message
       setConversations((prev) =>
         prev.map((c) =>
           c.id === currentConversation.id
@@ -448,7 +491,6 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#0B0D10] text-[#F8FAFC]">
-      {/* Sidebar */}
       <Sidebar
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
@@ -461,9 +503,11 @@ export default function App() {
         onTogglePin={handleTogglePin}
         onToggleArchive={handleToggleArchive}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenAgents={() => setIsAgentDashboardOpen(true)}
+        user={user}
+        onLogout={logout}
       />
 
-      {/* Main Chat Workspace */}
       <main className="flex-1 flex flex-col h-full min-w-0 relative bg-[#0B0D10]">
         <Header
           onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -471,13 +515,14 @@ export default function App() {
           webSearchEnabled={settings.webSearchEnabled}
           onToggleWebSearch={handleToggleWebSearch}
           isTemporary={Boolean(currentConversation?.isTemporary)}
-          onToggleTemporary={handleToggleTemporary}
+          onToggleTemporary={() => handleNewChat(!currentConversation?.isTemporary)}
           onNewChat={() => handleNewChat(false)}
           onClearCurrentChat={handleClearCurrentChat}
           onOpenSettings={() => setIsSettingsOpen(true)}
+          user={user}
+          onLogout={logout}
         />
 
-        {/* Chat Stream Area */}
         <ChatArea
           messages={currentConversation?.messages || []}
           onSelectPrompt={(p) => handleSendMessage(p)}
@@ -487,7 +532,6 @@ export default function App() {
           onFeedback={handleFeedback}
         />
 
-        {/* Input Bar */}
         <ChatInput
           onSendMessage={handleSendMessage}
           onStopGeneration={handleStopGeneration}
@@ -498,16 +542,12 @@ export default function App() {
         />
       </main>
 
-      {/* Camera Capture Modal */}
       <CameraModal
         isOpen={isCamOpen}
         onClose={() => setIsCamOpen(false)}
-        onCapture={(att) => {
-          handleSendMessage("", [att]);
-        }}
+        onCapture={(att) => handleSendMessage("", [att])}
       />
 
-      {/* Image & Visual Lightbox Viewer */}
       <ImageViewerModal
         isOpen={imageViewerState.isOpen}
         onClose={() => setImageViewerState({ isOpen: false })}
@@ -517,7 +557,6 @@ export default function App() {
         onRegenerate={(prompt) => handleSendMessage(prompt)}
       />
 
-      {/* Settings Modal */}
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
@@ -525,6 +564,19 @@ export default function App() {
         onSaveSettings={handleSaveSettings}
         onClearAllConversations={handleClearAllConversations}
       />
+
+      <AgentDashboard
+        isOpen={isAgentDashboardOpen}
+        onClose={() => setIsAgentDashboardOpen(false)}
+      />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppRouter />
+    </AuthProvider>
   );
 }
