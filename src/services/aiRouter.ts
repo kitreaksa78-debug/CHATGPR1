@@ -401,7 +401,7 @@ export async function routeAndStream(options: RouterOptions): Promise<{
   // ═══════════════════════════════════════════════════════════════════
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
   if (GROQ_API_KEY) {
-    const GROQ_MODELS = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"];
+    const GROQ_MODELS = ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "allam-2-7b"];
     
     for (const model of GROQ_MODELS) {
       try {
@@ -517,7 +517,7 @@ export async function routeAndStream(options: RouterOptions): Promise<{
             "Authorization": `Bearer ${COHERE_API_KEY}`,
           },
           body: JSON.stringify({
-            model: "command-r",
+            model: "command-r-08-2024",
             message: prompt,
             chat_history: chatHistory,
             preamble: config.systemInstruction || "You are a helpful AI assistant.",
@@ -575,36 +575,7 @@ export async function routeAndStream(options: RouterOptions): Promise<{
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  // TIER 5: Q8_K_XL Fallback
-  // ═══════════════════════════════════════════════════════════════════
-  try {
-    const { streamQ8Fallback } = await import("./q8Fallback.js");
-    console.log(`[AIRouter] ⚡ Trying Q8_K_XL fallback...`);
-    
-    const q8Result = await streamQ8Fallback({
-      endpointUrl: "https://hadadrjt-api.hf.space/v1",
-      modelName: "Q8_K_XL",
-      prompt,
-      systemInstruction: config.systemInstruction || "",
-      history,
-      onToken: (token) => {
-        fullText += token;
-        onToken(token);
-      },
-      timeoutMs: 10_000,
-    });
-
-    if (q8Result.success && fullText.length > 0) {
-      console.log(`[AIRouter] ✅ Q8_K_XL succeeded`);
-      onModelInfo?.("Q8_K_XL", true);
-      return { success: true, modelUsed: "Q8_K_XL", isFallback: true, fullText };
-    }
-  } catch (err: any) {
-    console.log(`[AIRouter] ❌ Q8_K_XL: ${err.message?.slice(0, 60)}`);
-  }
-
-  // ═══════════════════════════════════════════════════════════════════
-  // TIER 4: Knowledge Engine (Last resort — always works)
+  // TIER 5: Knowledge Engine (Last resort — always works)
   // ═══════════════════════════════════════════════════════════════════
   try {
     const { synthesizeAutonomousResponse } = await import("./knowledgeEngine.js");

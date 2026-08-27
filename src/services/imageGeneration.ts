@@ -1,6 +1,35 @@
 import { getGeminiClient } from "./gemini.js";
 
 export type ImageResolution = "512px" | "1K" | "2K" | "4K";
+
+// Content moderation - blocked terms for inappropriate/explicit content
+const BLOCKED_TERMS = [
+  // Explicit sexual content
+  "nude", "naked", "nsfw", "explicit", "porn", "sexy", "erotic",
+  "topless", "bottomless", "bikini", "lingerie",
+  // Violence
+  "gore", "blood", "kill", "murder", "death",
+  // Illegal content
+  "drug", "weapon", "gun",
+];
+
+/**
+ * Check if prompt contains inappropriate content
+ */
+function isPromptBlocked(prompt: string): { blocked: boolean; reason?: string } {
+  const lower = prompt.toLowerCase();
+  
+  for (const term of BLOCKED_TERMS) {
+    if (lower.includes(term)) {
+      return {
+        blocked: true,
+        reason: `Prompt contains inappropriate content: "${term}". Please keep prompts appropriate and respectful.`
+      };
+    }
+  }
+  
+  return { blocked: false };
+}
 export type ImageAspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4" | "1:4" | "1:8" | "4:1" | "8:1";
 
 export interface GenerateImageOptions {
@@ -94,6 +123,9 @@ Requirements:
 2. Cinematic lighting with natural shadows and depth
 3. For Cambodian/Khmer content: Authentic Southeast Asian features, traditional attire (sampot, krama), Angkor Wat setting
 4. Strong adherence to user instructions (colors, objects, styles, backgrounds)
+5. Professional photography quality: sharp focus, proper exposure, rich colors
+6. Avoid: blurry images, distorted faces, unnatural poses, low quality
+7. IMPORTANT: Generate ONLY appropriate, respectful content. No nudity, no explicit content, no suggestive poses. Keep all images family-friendly and suitable for all audiences.
 
 Output ONLY the expanded English prompt text. No introductory text, markdown, or quotation marks.`,
     });
@@ -138,7 +170,7 @@ async function generateWithPollinations(
   console.log(`[ImageGen] Using Pollinations.ai fallback`);
   
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+  const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 second timeout
   
   try {
     const response = await fetch(url, {
@@ -172,12 +204,87 @@ async function generateWithPollinations(
     console.warn("[ImageGen] Pollinations.ai error:", err.message);
   }
   
-  return { success: false, error: "All image generation services are currently unavailable." };
+  return { success: false, error: "All image generation services are currently unavailable. Please try again later." };
+}
+
+/**
+ * Gemini image generation models in priority order
+ */
+const GEMINI_IMAGE_MODELS = [
+  "gemini-3.1-flash-image",
+  "gemini-2.0-flash-exp",
+  "gemini-1.5-flash",
+];
+
+/**
+ * Try generating image with a specific Gemini model
+ */
+async function tryGeminiImageModel(
+  model: string,
+  prompt: string,
+  aspectRatio: ImageAspectRatio,
+  imageSize: ImageResolution,
+  inputImageBase64?: string,
+  inputImageMimeType?: string,
+): Promise<GenerateImageResult | null> {
+  const ai = getGeminiClient();
+  
+  try {
+    console.log(`[ImageGen] Trying Gemini model: ${model}`);
+    
+    const parts: any[] = [];
+    if (inputImageBase64) {
+      parts.push({
+        inlineData: {
+          data: inputImageBase64,
+          mimeType: inputImageMimeType || "image/png",
+        },
+      });
+    }
+    parts.push({ text: prompt });
+
+    const response = await ai.models.generateContent({
+      model,
+      contents: { parts },
+      config: {
+        imageConfig: {
+          aspectRatio,
+          imageSize,
+        },
+      },
+    });
+
+    const candidates = response.candidates;
+    if (candidates && candidates[0]?.content?.parts) {
+      for (const part of candidates[0].content.parts) {
+        if (part.inlineData && part.inlineData.data) {
+          const mimeType = part.inlineData.mimeType || "image/png";
+          const imageUrl = `data:${mimeType};base64,${part.inlineData.data}`;
+          console.log(`[ImageGen] ✅ Success with ${model}`);
+          return {
+            success: true,
+            imageUrl,
+            mimeType,
+            prompt,
+            revisedPrompt: prompt,
+            model,
+            imageSize,
+            aspectRatio,
+            isEdited: !!inputImageBase64,
+          };
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[ImageGen] ❌ ${model} failed:`, err.message?.slice(0, 80));
+  }
+  
+  return null;
 }
 
 /**
  * Generate AI image using fallback chain for reliability
- * Primary: gemini-3.1-flash-image → Fallback: Pollinations.ai (free)
+ * Primary: Gemini models → Fallback: Pollinations.ai (free)
  */
 export async function generateAIImage(options: GenerateImageOptions): Promise<GenerateImageResult> {
   const {
@@ -189,61 +296,40 @@ export async function generateAIImage(options: GenerateImageOptions): Promise<Ge
     isEditMode = false,
   } = options;
 
-  const ai = getGeminiClient();
   const hasReferenceImage = !!inputImageBase64;
+  
+  // Content moderation check
+  const moderation = isPromptBlocked(prompt);
+  if (moderation.blocked) {
+    console.log(`[ImageGen] ⚠️ Prompt blocked: ${moderation.reason}`);
+    return {
+      success: false,
+      error: moderation.reason,
+    };
+  }
+  
   const enhancedPrompt = await expandPromptForPhotorealism(prompt, hasReferenceImage);
 
-  // Try Gemini first
-  try {
-    console.log(`[ImageGen] Trying model: gemini-3.1-flash-image`);
+  // Try all Gemini models in priority order
+  for (const model of GEMINI_IMAGE_MODELS) {
+    const result = await tryGeminiImageModel(
+      model,
+      enhancedPrompt,
+      aspectRatio,
+      imageSize,
+      inputImageBase64,
+      inputImageMimeType,
+    );
     
-    const parts: any[] = [];
-    if (inputImageBase64) {
-      parts.push({
-        inlineData: {
-          data: inputImageBase64,
-          mimeType: inputImageMimeType,
-        },
-      });
+    if (result?.success) {
+      return result;
     }
-    parts.push({ text: enhancedPrompt });
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-image",
-      contents: { parts },
-      config: {
-        imageConfig: {
-          aspectRatio: aspectRatio,
-          imageSize: imageSize,
-        },
-      },
-    });
-
-    const candidates = response.candidates;
-    if (candidates && candidates[0]?.content?.parts) {
-      for (const part of candidates[0].content.parts) {
-        if (part.inlineData && part.inlineData.data) {
-          const mimeType = part.inlineData.mimeType || "image/png";
-          const imageUrl = `data:${mimeType};base64,${part.inlineData.data}`;
-          console.log(`[ImageGen] Success with gemini-3.1-flash-image`);
-          return {
-            success: true,
-            imageUrl,
-            mimeType,
-            prompt,
-            revisedPrompt: enhancedPrompt,
-            model: "gemini-3.1-flash-image (Nano Banana 2)",
-            imageSize,
-            aspectRatio,
-            isEdited: hasReferenceImage || isEditMode,
-          };
-        }
-      }
-    }
-  } catch (err: any) {
-    console.warn(`[ImageGen] Gemini failed:`, err.message?.slice(0, 100));
+    
+    // Small delay before trying next model
+    await new Promise(r => setTimeout(r, 500));
   }
 
   // Fallback to Pollinations.ai (free, no API key needed)
+  console.log(`[ImageGen] All Gemini models failed, trying Pollinations.ai...`);
   return generateWithPollinations(enhancedPrompt, aspectRatio);
 }
