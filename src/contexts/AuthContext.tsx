@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { API_BASE } from "../config.js";
 
 export interface User {
   id: string;
@@ -40,13 +41,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = () => {
-    window.location.href = "/api/auth/google";
+    window.location.href = `${API_BASE}/api/auth/google`;
   };
 
   const logout = () => {
     setUser(null);
     localStorage.removeItem(AUTH_STORAGE_KEY);
-    fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    fetch(`${API_BASE}/api/auth/logout`, { method: "POST" }).catch(() => {});
     window.location.reload();
   };
 
