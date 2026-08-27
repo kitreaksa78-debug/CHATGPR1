@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { API_BASE } from "./config.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { Header } from "./components/Header.js";
 import { ChatArea } from "./components/ChatArea.js";
@@ -265,7 +266,7 @@ function ChatDashboard() {
     abortControllerRef.current = controller;
 
     try {
-      const response = await fetch("/api/chat/stream", {
+      const response = await fetch(`${API_BASE}/api/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -397,7 +398,7 @@ function ChatDashboard() {
 
       if (isFirstUserTurn && settings.autoTitle && !targetConv.isTemporary) {
         setTimeout(() => {
-          fetch("/api/title", {
+          fetch(`${API_BASE}/api/title`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
