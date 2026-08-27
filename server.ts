@@ -25,7 +25,7 @@ dotenv.config();
 dotenv.config({ path: ".env.local" });
 
 const app = express();
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT || "3000", 10);
 const TELEGRAM_API = "https://api.telegram.org";
 
 // CORS middleware — allow the deployed frontend to call the API
