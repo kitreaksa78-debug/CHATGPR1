@@ -65,6 +65,12 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
   const [verifying, setVerifying] = useState(false);
   const [verifiedInfo, setVerifiedInfo] = useState<any>(null);
 
+  // Facebook OAuth pages state
+  const [fbPages, setFbPages] = useState<Array<{ id: string; name: string; access_token: string }>>([]);
+  const [selectedFbPage, setSelectedFbPage] = useState<string>("");
+  const [fbLoading, setFbLoading] = useState(false);
+  const [fbStep, setFbStep] = useState<"idle" | "pages" | "creating">("idle");
+
   // Edit agent state
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [editWelcomeMsg, setEditWelcomeMsg] = useState("");
@@ -77,6 +83,36 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
       fetchAgents();
     }
   }, [isOpen]);
+
+  // Handle Facebook OAuth callback
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fbPagesParam = params.get("fb_pages");
+    const fbError = params.get("fb_error");
+
+    if (fbPagesParam) {
+      try {
+        const data = JSON.parse(decodeURIComponent(fbPagesParam));
+        if (data.pages && data.pages.length > 0) {
+          setFbPages(data.pages);
+          setFbStep("pages");
+          setSetupPlatform("facebook");
+          setActiveTab("setup");
+        } else {
+          setError("មិនមាន Facebook Page ណាមួយរកឃើញ។ សូមបង្កើត Page សិន។");
+        }
+      } catch (e) {
+        console.error("Failed to parse Facebook pages data", e);
+      }
+      // Clean up URL
+      window.history.replaceState({}, "", window.location.pathname + "#/chat");
+    }
+
+    if (fbError) {
+      setError(`Facebook Login បានបរាជ័យ: ${fbError}`);
+      window.history.replaceState({}, "", window.location.pathname + "#/chat");
+    }
+  }, []);
 
   // Auto-dismiss error after 5 seconds
   useEffect(() => {
@@ -126,7 +162,6 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
       const data = await res.json();
       if (data.success) {
         setReplyText("");
-        // Add the reply to the local conversation immediately
         setSelectedConv((prev) => {
           if (!prev) return prev;
           return {
@@ -141,7 +176,6 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
             ],
           };
         });
-        // Also update in conversations list
         setConversations((prev) =>
           prev.map((c) =>
             c.id === conv.id
@@ -177,7 +211,6 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
 
     const token = setupPlatform === "facebook" ? facebookToken : telegramToken;
 
-    // Client-side token format validation
     if (setupPlatform === "telegram" && token && !token.includes(":")) {
       setError("Telegram Token មិនត្រឹមត្រូវ។ Token ត្រូវតែមានរូបភាព៖ លេខ:អក្សរ (ឧ. 123456789:ABCdefGHI)");
       setVerifying(false);
@@ -249,10 +282,45 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
         setVerifiedInfo(null);
       } else {
         const data = await res.json();
-        setError(data.error || "បង្កើត Agent បានបរាជ័យ។ សូមពិនិត្យ Token របស់អ្នក។");
+        setError(data.error || "បង្កើត Agent បានបរាជ័យ។");
       }
     } catch (err) {
-      setError("បង្កើត Agent បានបរាជ័យ។ សូមពិនិត្យ Internet របស់អ្នក។");
+      setError("បង្កើត Agent បានបរាជ័យ។ សូមពិនិត្យ Internet។");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateFbAgent = async (page: { id: string; name: string; access_token: string }) => {
+    setFbStep("creating");
+    setError("");
+    try {
+      const res = await fetch("/api/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          platform: "facebook",
+          pageAccessToken: page.access_token,
+          welcomeMessage: welcomeMsg,
+          systemPrompt,
+          commentReplyPrompt,
+          autoPostPrompt,
+        }),
+      });
+      if (res.ok) {
+        await fetchAgents();
+        setActiveTab("list");
+        setFbPages([]);
+        setSelectedFbPage("");
+        setFbStep("idle");
+      } else {
+        const data = await res.json();
+        setError(data.error || "បង្កើត Agent បានបរាជ័យ។");
+        setFbStep("pages");
+      }
+    } catch (err) {
+      setError("បង្កើត Agent បានបរាជ័យ។ សូមពិនិត្យ Internet។");
+      setFbStep("pages");
     } finally {
       setLoading(false);
     }
@@ -260,28 +328,33 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
 
   const handleToggleAgent = async (agentId: string) => {
     try {
-      await fetch(`/api/agents/${agentId}/toggle`, { method: "POST" });
-      await fetchAgents();
+      const res = await fetch(`/api/agents/${agentId}/toggle`, { method: "POST" });
+      if (res.ok) await fetchAgents();
     } catch (err) {
-      setError("ប្តូរស្ថានភាព Agent បានបរាជ័យ។");
+      setError("ប្ដូរស្ថានភាពបានបរាជ័យ។");
     }
   };
 
   const handleToggleHumanTakeover = async (agentId: string) => {
     try {
-      await fetch(`/api/agents/${agentId}/human-takeover`, { method: "POST" });
-      await fetchAgents();
+      const res = await fetch(`/api/agents/${agentId}/toggle-human`, { method: "POST" });
+      if (res.ok) await fetchAgents();
     } catch (err) {
-      setError("ប្តូរ Human Takeover បានបរាជ័យ។");
+      setError("ប្ដូរស្ថានភាពបានបរាជ័យ។");
     }
   };
 
   const handleDeleteAgent = async (agentId: string) => {
-    if (!confirm("តើអ្នកពិតជាចង់លុប Agent នេះមែនទេ?")) return;
+    if (!confirm("តើអ្នកប្រាកដថាចង់លុប Agent នេះមែនទេ?")) return;
     try {
-      await fetch(`/api/agents/${agentId}`, { method: "DELETE" });
-      await fetchAgents();
-      setSelectedAgent(null);
+      const res = await fetch(`/api/agents/${agentId}`, { method: "DELETE" });
+      if (res.ok) {
+        await fetchAgents();
+        if (selectedAgent?.id === agentId) {
+          setSelectedAgent(null);
+          setActiveTab("list");
+        }
+      }
     } catch (err) {
       setError("លុប Agent បានបរាជ័យ។");
     }
@@ -289,13 +362,12 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
 
   const handleSetupWebhook = async (agentId: string, platform: string) => {
     try {
-      const res = await fetch(`/api/agents/${platform}/setup`, { method: "POST" });
+      const res = await fetch(`/api/agents/${agentId}/setup-webhook`, { method: "POST" });
       const data = await res.json();
       if (data.success) {
-        alert(`Webhook បានដំឡើងជោគជ័យ!\nURL: ${data.webhookUrl}`);
         await fetchAgents();
       } else {
-        setError(data.error || "Webhook បានបរាជ័យ។ សូមពិនិត្យ Token របស់អ្នក។");
+        setError(data.error || "Webhook បានបរាជ័យ។");
       }
     } catch (err) {
       setError("Webhook បានបរាជ័យ។");
@@ -346,13 +418,13 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
         {/* Tabs */}
         <div className="flex border-b border-[#1E232E] bg-[#171A21]">
           <button
-            onClick={() => { setActiveTab("list"); setSelectedConv(null); setEditingAgent(null); }}
+            onClick={() => { setActiveTab("list"); setSelectedConv(null); setEditingAgent(null); setFbStep("idle"); setFbPages([]); }}
             className={`px-6 py-3 text-sm font-medium ${activeTab === "list" ? "text-[#818CF8] border-b-2 border-[#818CF8]" : "text-[#94A3B8] hover:text-white"}`}
           >
             🤖 Agents
           </button>
           <button
-            onClick={() => { setActiveTab("setup"); setSelectedConv(null); setEditingAgent(null); }}
+            onClick={() => { setActiveTab("setup"); setSelectedConv(null); setEditingAgent(null); setFbStep("idle"); setFbPages([]); }}
             className={`px-6 py-3 text-sm font-medium ${activeTab === "setup" ? "text-[#818CF8] border-b-2 border-[#818CF8]" : "text-[#94A3B8] hover:text-white"}`}
           >
             + បន្ថែម
@@ -490,7 +562,6 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
             </div>
           )}
 
-          {/* Setup Form */}
           {/* Edit Agent Modal */}
           {editingAgent && (
             <div className="space-y-4">
@@ -593,6 +664,7 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
             </div>
           )}
 
+          {/* Setup Form */}
           {activeTab === "setup" && !editingAgent && (
             <div className="max-w-md mx-auto space-y-6">
               <div>
@@ -601,7 +673,7 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
                 </label>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setSetupPlatform("facebook")}
+                    onClick={() => { setSetupPlatform("facebook"); setFbStep("idle"); setFbPages([]); }}
                     className={`flex-1 p-3 rounded-xl border ${
                       setupPlatform === "facebook"
                         ? "border-[#6366F1] bg-[#6366F1]/10"
@@ -623,156 +695,260 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
                 </div>
               </div>
 
-              {/* Setup Instructions */}
-              {setupPlatform === "telegram" ? (
-                <div className="p-3 bg-[#6366F1]/10 border border-[#6366F1]/30 rounded-xl text-xs text-[#94A3B8] space-y-2">
-                  <p className="text-[#818CF8] font-medium">📋 របៀបបង្កើត Telegram Bot៖</p>
-                  <ol className="list-decimal list-inside space-y-1">
-                    <li>បើក Telegram ហើយស្វែងរក <span className="text-white font-medium">@BotFather</span></li>
-                    <li>ផ្ញើពាក្យបញ្ជា <span className="text-white font-medium">/newbot</span></li>
-                    <li>ដាក់ឈ្មោះ Bot របស់អ្នក</li>
-                    <li>ដាក់ username របស់ Bot (ចប់ដោយ <span className="text-white font-medium">bot</span>)</li>
-                    <li>BotFather នឹងផ្ញើ <span className="text-white font-medium">Bot Token</span> មកអ្នក</li>
-                    <li>ចម្លង Token មកដាក់ក្នុងប្រអប់ខាងក្រោម</li>
-                  </ol>
-                  <p className="text-yellow-400">⚠️ រូបភាព និង Files អាចផ្ញើបាន!</p>
-                </div>
-              ) : (
-                <div className="p-3 bg-[#6366F1]/10 border border-[#6366F1]/30 rounded-xl text-xs text-[#94A3B8] space-y-2">
-                  <p className="text-[#818CF8] font-medium">📋 របៀបភ្ជាប់ Facebook៖</p>
-                  <ol className="list-decimal list-inside space-y-1">
-                    <li>បើក <span className="text-white font-medium">developers.facebook.com</span></li>
-                    <li>បង្កើត App ថ្មី (Business type)</li>
-                    <li>បន្ថែម Facebook Login product</li>
-                    <li>ទៅ Graph API Explorer</li>
-                    <li>ជ្រើសរើស Page របស់អ្នក</li>
-                    <li>កំណត់ permissions៖ <span className="text-white font-medium">pages_messaging, pages_manage_metadata</span></li>
-                    <li>ចម្លង <span className="text-white font-medium">Page Access Token</span></li>
-                  </ol>
-                  <p className="text-yellow-400">⚠️ Token ត្រូវតែជា Page Access Token មិនមែន User Token!</p>
-                </div>
-              )}
-
+              {/* Facebook: Show pages if logged in, else show Login button */}
               {setupPlatform === "facebook" ? (
-                <div>
-                  <label className="block text-sm font-medium text-white mb-2">
-                    Facebook Page Access Token
-                  </label>
-                  <input
-                    type="password"
-                    value={facebookToken}
-                    onChange={(e) => setFacebookToken(e.target.value)}
-                    placeholder="EAAxxxx... (Page Access Token)"
-                    className="w-full px-4 py-3 rounded-xl bg-[#171A21] border border-[#242933] text-white placeholder-[#64748B] focus:outline-none focus:border-[#6366F1] font-mono text-xs"
-                  />
-                  <p className="text-[10px] text-[#64748B] mt-1">Token ចាប់ផ្តើមដោយ EAA ឬ EAAG</p>
-                </div>
+                fbStep === "pages" && fbPages.length > 0 ? (
+                  /* Page Selector */
+                  <div className="space-y-3">
+                    <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-xl">
+                      <p className="text-green-400 text-sm font-medium">✅ ភ្ជាប់ Facebook បានជោគជ័យ!</p>
+                      <p className="text-white text-xs mt-1">ជ្រើសរើស Page ដែលអ្នកចង់ប្រើ៖</p>
+                    </div>
+
+                    {fbPages.map((page) => (
+                      <div
+                        key={page.id}
+                        className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                          selectedFbPage === page.id
+                            ? "border-[#6366F1] bg-[#6366F1]/10"
+                            : "border-[#242933] bg-[#171A21] hover:border-[#6366F1]/50"
+                        }`}
+                        onClick={() => setSelectedFbPage(page.id)}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                            selectedFbPage === page.id ? "border-[#6366F1]" : "border-[#64748B]"
+                          }`}>
+                            {selectedFbPage === page.id && (
+                              <div className="w-2 h-2 rounded-full bg-[#6366F1]" />
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-white text-sm font-medium">{page.name}</p>
+                            <p className="text-[10px] text-[#64748B]">ID: {page.id}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    {selectedFbPage && (
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-xs font-medium text-[#94A3B8] mb-1.5">💬 សារស្វាគមន៍</label>
+                          <input
+                            type="text"
+                            value={welcomeMsg}
+                            onChange={(e) => setWelcomeMsg(e.target.value)}
+                            className="w-full px-3 py-2.5 rounded-xl bg-[#0B0D10] border border-[#242933] text-white text-sm placeholder-[#64748B] focus:outline-none focus:border-[#6366F1]"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-[#94A3B8] mb-1.5">🧠 System Prompt (ជម្រើស)</label>
+                          <textarea
+                            value={systemPrompt}
+                            onChange={(e) => setSystemPrompt(e.target.value)}
+                            rows={3}
+                            placeholder="ឧ. អ្នកជា AI ជំនួយការសម្រាប់ហាងទូរសព្ទ..."
+                            className="w-full px-3 py-2.5 rounded-xl bg-[#0B0D10] border border-[#242933] text-white text-sm placeholder-[#64748B] focus:outline-none focus:border-[#6366F1] resize-none"
+                          />
+                        </div>
+                        <button
+                          onClick={() => {
+                            const page = fbPages.find((p) => p.id === selectedFbPage);
+                            if (page) handleCreateFbAgent(page);
+                          }}
+                          disabled={loading}
+                          className="w-full py-3 bg-gradient-to-r from-[#6366F1] to-[#8B5CF6] text-white rounded-xl text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                        >
+                          {loading ? "កំពុងបង្កើត..." : "🤖 បង្កើត Agent"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* Login with Facebook Button */
+                  <div className="space-y-3">
+                    <div className="p-3 bg-[#6366F1]/10 border border-[#6366F1]/30 rounded-xl text-xs text-[#94A3B8] space-y-2">
+                      <p className="text-[#818CF8] font-medium">📘 ភ្ជាប់ Facebook Account</p>
+                      <p>ចុចប៊ូតុងខាងក្រោមដើម្បីភ្ជាប់ Facebook Account របស់អ្នក។ ប្រព័ន្ធនឹងស្វែងរក Page ដោយស្វ័យប្រវត្តិ។</p>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        window.location.href = "/api/auth/facebook";
+                      }}
+                      className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl bg-[#1877F2] text-white font-medium text-sm hover:bg-[#166FE5] active:scale-[0.98] transition-all shadow-lg shadow-[#1877F2]/20"
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                        <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                      </svg>
+                      Login with Facebook
+                    </button>
+
+                    <p className="text-[10px] text-[#64748B] text-center">
+                      នឹងស្វែងរក Page របស់អ្នកដោយស្វ័យប្រវត្តិ
+                    </p>
+
+                    {/* Fallback: Manual Token Input */}
+                    <details className="group">
+                      <summary className="text-xs text-[#64748B] cursor-pointer hover:text-[#94A3B8] transition-colors">
+                        💡 បញ្ចូល Token ដោយផ្ទាល់ (Advanced)
+                      </summary>
+                      <div className="mt-2 space-y-2">
+                        <div className="p-2 bg-[#6366F1]/10 border border-[#6366F1]/30 rounded-xl text-[10px] text-[#94A3B8] space-y-1">
+                          <p className="text-[#818CF8] font-medium">របៀបដោយដៃ៖</p>
+                          <ol className="list-decimal list-inside space-y-0.5">
+                            <li>បើក <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer" className="text-[#818CF8] underline">Graph API Explorer</a></li>
+                            <li>ជ្រើស Page → កំណត់ permissions</li>
+                            <li>ចុច Generate Token → ចម្លង</li>
+                          </ol>
+                        </div>
+                        <input
+                          type="password"
+                          value={facebookToken}
+                          onChange={(e) => setFacebookToken(e.target.value)}
+                          placeholder="EAAxxxx... (Page Access Token)"
+                          className="w-full px-3 py-2.5 rounded-xl bg-[#0B0D10] border border-[#242933] text-white text-sm placeholder-[#64748B] focus:outline-none focus:border-[#6366F1] font-mono"
+                        />
+                        <button
+                          onClick={handleVerifyToken}
+                          disabled={verifying || !facebookToken}
+                          className="w-full py-2 bg-[#242933] text-white rounded-xl text-sm hover:bg-[#2E3340] disabled:opacity-50"
+                        >
+                          {verifying ? "កំពុងពិនិត្យ..." : "✅ ពិនិត្យ Token"}
+                        </button>
+                      </div>
+                    </details>
+                  </div>
+                )
               ) : (
-                <div>
-                  <label className="block text-sm font-medium text-white mb-2">
-                    Telegram Bot Token
-                  </label>
-                  <input
-                    type="password"
-                    value={telegramToken}
-                    onChange={(e) => setTelegramToken(e.target.value)}
-                    placeholder="123456789:ABCdefGHI... (Bot Token)"
-                    className="w-full px-4 py-3 rounded-xl bg-[#171A21] border border-[#242933] text-white placeholder-[#64748B] focus:outline-none focus:border-[#6366F1] font-mono text-xs"
-                  />
-                  <p className="text-[10px] text-[#64748B] mt-1">Token មានរូបភាព៖ លេខ:អក្សរ</p>
-                </div>
-              )}
-
-              <button
-                onClick={handleVerifyToken}
-                disabled={verifying || (!facebookToken && !telegramToken)}
-                className="w-full py-2 bg-[#242933] text-white rounded-xl text-sm hover:bg-[#2E3340] disabled:opacity-50"
-              >
-                {verifying ? "កំពុងពិនិត្យ..." : "✅ ពិនិត្យ Token"}
-              </button>
-
-              {verifiedInfo && (
-                <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-xl">
-                  <p className="text-green-400 text-sm font-medium">✓ Token ត្រឹមត្រូវ!</p>
-                  <p className="text-white text-sm mt-1">
-                    {setupPlatform === "facebook"
-                      ? `📄 Page: ${verifiedInfo.name}`
-                      : `🤖 Bot: @${verifiedInfo.username}`}
-                  </p>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-sm font-medium text-white mb-2">
-                  💬 សារស្វាគមន៍
-                </label>
-                <input
-                  type="text"
-                  value={welcomeMsg}
-                  onChange={(e) => setWelcomeMsg(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl bg-[#171A21] border border-[#242933] text-white placeholder-[#64748B] focus:outline-none focus:border-[#6366F1]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-white mb-2">
-                  🧠 System Prompt (ជម្រើស)
-                </label>
-                <textarea
-                  value={systemPrompt}
-                  onChange={(e) => setSystemPrompt(e.target.value)}
-                  rows={3}
-                  placeholder="ឧ. អ្នកជា AI ជំនួយការសម្រាប់ហាងទូរសព្ទ..."
-                  className="w-full px-4 py-3 rounded-xl bg-[#171A21] border border-[#242933] text-white placeholder-[#64748B] focus:outline-none focus:border-[#6366F1] resize-none"
-                />
-              </div>
-
-              {setupPlatform === "facebook" && (
+                /* Telegram Setup */
                 <>
-                  <div>
-                    <label className="block text-sm font-medium text-white mb-2">
-                      💬 Comment Auto-Reply Prompt (ជម្រើស)
-                    </label>
-                    <textarea
-                      value={commentReplyPrompt}
-                      onChange={(e) => setCommentReplyPrompt(e.target.value)}
-                      rows={3}
-                      placeholder="ឧ. ឆ្លើយតបជាភាសាខ្មែរដោយរាក់ទាក់ និងផ្តល់ព័ត៌មានអំពីផលិតផល..."
-                      className="w-full px-4 py-3 rounded-xl bg-[#171A21] border border-[#242933] text-white placeholder-[#64748B] focus:outline-none focus:border-[#6366F1] resize-none"
-                    />
-                    <p className="text-[10px] text-[#64748B] mt-1">AI នឹងប្រើ prompt នេះដើម្បីឆ្លើយតប comments ស្វ័យប្រវត្តិ</p>
+                  <div className="p-3 bg-[#6366F1]/10 border border-[#6366F1]/30 rounded-xl text-xs text-[#94A3B8] space-y-2">
+                    <p className="text-[#818CF8] font-medium">📋 របៀបបង្កើត Telegram Bot៖</p>
+                    <ol className="list-decimal list-inside space-y-1">
+                      <li>បើក Telegram ហើយស្វែងរក <span className="text-white font-medium">@BotFather</span></li>
+                      <li>ផ្ញើពាក្យបញ្ជា <span className="text-white font-medium">/newbot</span></li>
+                      <li>ដាក់ឈ្មោះ Bot និង username (ចប់ដោយ <span className="text-white font-medium">bot</span>)</li>
+                      <li>ចម្លង <span className="text-white font-medium">Bot Token</span> មកដាក់ខាងក្រោម</li>
+                    </ol>
+                    <p className="text-yellow-400">⚠️ រូបភាព និង Files អាចផ្ញើបាន!</p>
                   </div>
 
                   <div>
                     <label className="block text-sm font-medium text-white mb-2">
-                      📝 Auto-Post Prompt (ជម្រើស)
+                      Telegram Bot Token
                     </label>
-                    <textarea
-                      value={autoPostPrompt}
-                      onChange={(e) => setAutoPostPrompt(e.target.value)}
-                      rows={2}
-                      placeholder="ឧ. បង្កើត post អំពីការបញ្ជាទិញទូរសព្ទ ជាមួយ emoji និង Hashtag"
-                      className="w-full px-4 py-3 rounded-xl bg-[#171A21] border border-[#242933] text-white placeholder-[#64748B] focus:outline-none focus:border-[#6366F1] resize-none"
+                    <input
+                      type="password"
+                      value={telegramToken}
+                      onChange={(e) => setTelegramToken(e.target.value)}
+                      placeholder="123456789:ABCdefGHI... (Bot Token)"
+                      className="w-full px-4 py-3 rounded-xl bg-[#171A21] border border-[#242933] text-white placeholder-[#64748B] focus:outline-none focus:border-[#6366F1] font-mono text-xs"
                     />
-                    <p className="text-[10px] text-[#64748B] mt-1">AI នឹងប្រើ prompt នេះដើម្បីបង្កើត post ស្វ័យប្រវត្តិ</p>
+                    <p className="text-[10px] text-[#64748B] mt-1">Token មានរូបភាព៖ លេខ:អក្សរ</p>
                   </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-white mb-2">💬 សារស្វាគមន៍</label>
+                    <input
+                      type="text"
+                      value={welcomeMsg}
+                      onChange={(e) => setWelcomeMsg(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl bg-[#171A21] border border-[#242933] text-white text-sm placeholder-[#64748B] focus:outline-none focus:border-[#6366F1]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-white mb-2">🧠 System Prompt (ជម្រើស)</label>
+                    <textarea
+                      value={systemPrompt}
+                      onChange={(e) => setSystemPrompt(e.target.value)}
+                      rows={3}
+                      placeholder="ឧ. អ្នកជា AI ជំនួយការសម្រាប់ហាងទូរសព្ទ..."
+                      className="w-full px-3 py-2.5 rounded-xl bg-[#171A21] border border-[#242933] text-white text-sm placeholder-[#64748B] focus:outline-none focus:border-[#6366F1] resize-none"
+                    />
+                  </div>
+
+                  <button
+                    onClick={handleVerifyToken}
+                    disabled={verifying || !telegramToken}
+                    className="w-full py-2 bg-[#242933] text-white rounded-xl text-sm hover:bg-[#2E3340] disabled:opacity-50"
+                  >
+                    {verifying ? "កំពុងពិនិត្យ..." : "✅ ពិនិត្យ Token"}
+                  </button>
+
+                  {verifiedInfo && (
+                    <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-xl">
+                      <p className="text-green-400 text-sm font-medium">✓ Token ត្រឹមត្រូវ!</p>
+                      <p className="text-white text-sm mt-1">
+                        🤖 Bot: @{verifiedInfo.username}
+                      </p>
+                    </div>
+                  )}
+
+                  {verifiedInfo && (
+                    <button
+                      onClick={handleCreateAgent}
+                      disabled={loading}
+                      className="w-full py-3 bg-gradient-to-r from-[#6366F1] to-[#8B5CF6] text-white rounded-xl text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                    >
+                      {loading ? "កំពុងបង្កើត..." : "🤖 បង្កើត Agent"}
+                    </button>
+                  )}
                 </>
               )}
-
-              <button
-                onClick={handleCreateAgent}
-                disabled={loading || (!facebookToken && !telegramToken)}
-                className="w-full py-3 bg-gradient-to-r from-[#6366F1] to-[#8B5CF6] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50"
-              >
-                {loading ? "កំពុងបង្កើត..." : "🤖 បង្កើត Agent"}
-              </button>
             </div>
           )}
 
-          {/* Conversation Detail View */}
-          {activeTab === "conversations" && selectedConv && (
+          {/* Conversations View */}
+          {activeTab === "conversations" && selectedAgent && !selectedConv && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 mb-4">
+                <button
+                  onClick={() => { setActiveTab("list"); setSelectedAgent(null); }}
+                  className="p-2 text-[#94A3B8] hover:text-white rounded-lg hover:bg-[#242933] text-sm"
+                >
+                  ← ថយក្រោយ
+                </button>
+                <h3 className="text-sm font-bold text-white">💬 សារទាំងអស់</h3>
+                {getPlatformBadge(selectedAgent.platform)}
+              </div>
+
+              {conversations.length === 0 ? (
+                <div className="text-center py-12 text-[#94A3B8]">
+                  <p>មិនទាន់មានសារនៅឡើយ</p>
+                </div>
+              ) : (
+                conversations.map((conv) => (
+                  <button
+                    key={conv.id}
+                    onClick={() => setSelectedConv(conv)}
+                    className="w-full text-left p-4 bg-[#171A21] border border-[#242933] rounded-xl hover:border-[#6366F1]/50 transition-colors"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">👤</span>
+                        <span className="font-bold text-white">{conv.userName || `User ${conv.userId}`}</span>
+                      </div>
+                      <span className="text-xs text-[#64748B]">{formatTime(conv.updatedAt)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[#94A3B8]">{conv.messages.length} សារ</span>
+                      <span className="text-[10px] text-[#64748B]">•</span>
+                      <span className="text-xs text-[#64748B] truncate flex-1">
+                        {conv.messages[conv.messages.length - 1]?.content.slice(0, 60)}...
+                      </span>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Single Conversation View */}
+          {activeTab === "conversations" && selectedAgent && selectedConv && (
             <div className="space-y-4">
-              {/* Back button + User info header */}
               <div className="flex items-center gap-3 p-3 bg-[#171A21] border border-[#242933] rounded-xl">
                 <button
                   onClick={() => setSelectedConv(null)}
@@ -783,10 +959,8 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-lg">👤</span>
-                    <span className="font-bold text-white text-base">
-                      {selectedConv.userName || `User ${selectedConv.userId}`}
-                    </span>
-                    {getPlatformBadge(selectedConv.platform === "telegram" ? "telegram" : "facebook")}
+                    <span className="font-bold text-white text-base">{selectedConv.userName || `User ${selectedConv.userId}`}</span>
+                    {getPlatformBadge(selectedConv.platform)}
                   </div>
                   <p className="text-[10px] text-[#64748B] ml-8">
                     ID: {selectedConv.userId} • {selectedConv.messages.length} សារ • {formatTime(selectedConv.updatedAt)}
@@ -794,11 +968,10 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
                 </div>
               </div>
 
-              {/* Messages */}
               <div className="space-y-3 max-h-[50vh] overflow-y-auto p-2">
-                {selectedConv.messages.map((msg, i) => (
+                {selectedConv.messages.map((msg, idx) => (
                   <div
-                    key={i}
+                    key={idx}
                     className={`flex ${msg.role === "user" ? "justify-start" : "justify-end"}`}
                   >
                     <div
@@ -812,21 +985,15 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
                         {msg.role === "user" ? (
                           <>
                             <span className="text-xs">👤</span>
-                            <span className="text-[10px] font-medium text-[#818CF8]">
-                              {selectedConv.userName || "User"}
-                            </span>
+                            <span className="text-[10px] font-medium text-[#818CF8]">{selectedConv.userName || "User"}</span>
                           </>
                         ) : (
                           <>
                             <span className="text-xs">🤖</span>
-                            <span className="text-[10px] font-medium text-green-400">
-                              {msg.role === "assistant" ? "Admin / AI" : "AI"}
-                            </span>
+                            <span className="text-[10px] font-medium text-green-400">AI</span>
                           </>
                         )}
-                        <span className="text-[9px] text-[#64748B] ml-auto">
-                          {formatTime(msg.timestamp)}
-                        </span>
+                        <span className="text-[9px] text-[#64748B] ml-auto">{formatTime(msg.timestamp)}</span>
                       </div>
                       <p className="whitespace-pre-wrap break-words">{msg.content}</p>
                     </div>
@@ -835,7 +1002,6 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Reply Input */}
               <div className="flex items-center gap-2 p-3 bg-[#171A21] border border-[#242933] rounded-xl">
                 <input
                   type="text"
@@ -859,50 +1025,6 @@ export function AgentDashboard({ isOpen, onClose }: AgentDashboardProps) {
                   {replying ? "⏳" : "📤 ផ្ញើ"}
                 </button>
               </div>
-            </div>
-          )}
-
-          {/* Conversations List */}
-          {activeTab === "conversations" && selectedAgent && !selectedConv && (
-            <div className="space-y-3">
-              <p className="text-xs text-[#64748B] mb-2">
-                ចុចលើសារដើម្បីមើល និងឆ្លើយតប
-              </p>
-              {conversations.length === 0 ? (
-                <div className="text-center py-12 text-[#94A3B8]">
-                  <p>មិនទាន់មានសារនៅឡើយ</p>
-                </div>
-              ) : (
-                conversations.map((conv) => (
-                  <button
-                    key={conv.id}
-                    onClick={() => setSelectedConv(conv)}
-                    className="w-full text-left p-4 bg-[#171A21] border border-[#242933] rounded-xl hover:border-[#6366F1]/50 transition-colors"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg">👤</span>
-                        <span className="font-bold text-white">
-                          {conv.userName || `User ${conv.userId}`}
-                        </span>
-                        {getPlatformBadge(conv.platform === "telegram" ? "telegram" : "facebook")}
-                      </div>
-                      <span className="text-xs text-[#64748B]">
-                        {formatTime(conv.updatedAt)}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-[#94A3B8]">
-                        {conv.messages.length} សារ
-                      </span>
-                      <span className="text-[10px] text-[#64748B]">•</span>
-                      <span className="text-xs text-[#64748B] truncate flex-1">
-                        {conv.messages[conv.messages.length - 1]?.content.slice(0, 60)}...
-                      </span>
-                    </div>
-                  </button>
-                ))
-              )}
             </div>
           )}
         </div>

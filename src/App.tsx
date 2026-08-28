@@ -16,7 +16,6 @@ import {
   Message,
   Attachment,
   ChatSettings,
-  GeneratedImage,
   VisualExplanation,
 } from "./types.js";
 import {
@@ -95,11 +94,11 @@ function ChatDashboard() {
   const [imageViewerState, setImageViewerState] = useState<{
     isOpen: boolean;
     imageUrl?: string;
-    generatedInfo?: GeneratedImage;
     visualExplanationInfo?: VisualExplanation;
   }>({ isOpen: false });
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const pendingEditRef = useRef<{ convId: string; messages: Message[] } | null>(null);
 
   useEffect(() => {
     const loaded = loadConversations();
@@ -250,7 +249,15 @@ function ChatDashboard() {
       createdAt: Date.now(),
     };
 
-    const updatedMessages = [...targetConv.messages, userMessage, initialAssistantMessage];
+    // Check for pending edit (from handleEditMessage)
+    let updatedMessages: Message[];
+    const pendingEdit = pendingEditRef.current;
+    if (pendingEdit && pendingEdit.convId === targetConv?.id) {
+      pendingEditRef.current = null;
+      updatedMessages = [...pendingEdit.messages, userMessage, initialAssistantMessage];
+    } else {
+      updatedMessages = [...targetConv.messages, userMessage, initialAssistantMessage];
+    }
     const isFirstUserTurn = targetConv.messages.length === 0;
 
     setConversations((prev) =>
@@ -290,7 +297,6 @@ function ChatDashboard() {
       let detectedIntent: any = undefined;
       let modelUsed: string | undefined = undefined;
       let isFallbackMsg = false;
-      let finalGeneratedImage: GeneratedImage | undefined = undefined;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -358,22 +364,32 @@ function ChatDashboard() {
                 updateAssistantMessage(targetConv.id, assistantMessageId, {
                   groundingSources: parsed.sources,
                 });
-              } else if (parsed.type === "image_gen_success") {
-                finalGeneratedImage = {
-                  imageUrl: parsed.imageUrl,
-                  prompt: parsed.prompt,
-                  revisedPrompt: parsed.revisedPrompt,
-                  model: parsed.model || "gemini-3.1-flash-image",
-                  imageSize: parsed.imageSize || "2K",
-                  aspectRatio: parsed.aspectRatio,
-                  createdAt: Date.now(),
-                };
+              } else if (parsed.type === "file_gen_start") {
                 updateAssistantMessage(targetConv.id, assistantMessageId, {
-                  generatedImage: finalGeneratedImage,
-                  intent: "image_gen",
+                  intent: "file_gen",
+                  isStreaming: true,
+                });
+              } else if (parsed.type === "file_gen_success") {
+                updateAssistantMessage(targetConv.id, assistantMessageId, {
+                  generatedFile: {
+                    id: parsed.file?.id || "file_" + Date.now(),
+                    filename: parsed.file?.filename || "document",
+                    mimeType: parsed.file?.mimeType || "application/octet-stream",
+                    downloadUrl: parsed.file?.downloadUrl || "",
+                    fileSize: parsed.file?.fileSize || 0,
+                    type: parsed.file?.type || "txt",
+                    status: "ready" as const,
+                    createdAt: Date.now(),
+                  },
+                  intent: "file_gen",
+                  isStreaming: true,
+                });
+              } else if (parsed.type === "file_gen_error") {
+                updateAssistantMessage(targetConv.id, assistantMessageId, {
+                  error: parsed.error || "File generation failed",
                   isStreaming: false,
                 });
-              } else if (parsed.type === "image_gen_error" || parsed.type === "error") {
+              } else if (parsed.type === "error") {
                 updateAssistantMessage(targetConv.id, assistantMessageId, {
                   error: parsed.error,
                   isStreaming: false,
@@ -403,7 +419,7 @@ function ChatDashboard() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               prompt: text,
-              response: accumulatedContent || finalGeneratedImage?.prompt || "",
+              response: accumulatedContent || "",
             }),
           })
             .then((res) => res.json())
@@ -473,11 +489,33 @@ function ChatDashboard() {
     }
   };
 
+  const handleEditMessage = (messageId: string, newContent: string) => {
+    if (!activeChatId || !currentConversation) return;
+    // Find the user message index
+    const msgIndex = currentConversation.messages.findIndex((m) => m.id === messageId);
+    if (msgIndex === -1) return;
+    // Trim messages: keep everything up to and including this user message
+    const trimmedMessages = currentConversation.messages.slice(0, msgIndex + 1).map((m) =>
+      m.id === messageId ? { ...m, content: newContent } : m
+    );
+    // Store pending edit in ref so handleSendMessage picks it up
+    pendingEditRef.current = { convId: activeChatId, messages: trimmedMessages };
+    // Update conversation state (removes the old AI response)
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === activeChatId
+          ? { ...c, messages: trimmedMessages, updatedAt: Date.now() }
+          : c
+      )
+    );
+    // Send the edited message
+    handleSendMessage(newContent, []);
+  };
+
   const handleOpenImageViewer = (imageUrl: string, message: Message) => {
     setImageViewerState({
       isOpen: true,
       imageUrl,
-      generatedInfo: message.generatedImage,
       visualExplanationInfo: undefined,
     });
   };
@@ -528,9 +566,11 @@ function ChatDashboard() {
           messages={currentConversation?.messages || []}
           onSelectPrompt={(p) => handleSendMessage(p)}
           onRegenerate={handleRegenerate}
+          onEditMessage={handleEditMessage}
           onOpenImageViewer={handleOpenImageViewer}
           onOpenVisualViewer={handleOpenVisualViewer}
           onFeedback={handleFeedback}
+          isStreaming={isStreaming}
         />
 
         <ChatInput
@@ -553,7 +593,6 @@ function ChatDashboard() {
         isOpen={imageViewerState.isOpen}
         onClose={() => setImageViewerState({ isOpen: false })}
         imageUrl={imageViewerState.imageUrl}
-        generatedImageInfo={imageViewerState.generatedInfo}
         visualExplanationInfo={imageViewerState.visualExplanationInfo}
         onRegenerate={(prompt) => handleSendMessage(prompt)}
       />

@@ -1,4 +1,5 @@
 import { IntentCategory, VisualType } from "../types.js";
+import { detectFileIntent } from "./fileGenerator.js";
 
 export interface RouteAnalysis {
   intent: IntentCategory;
@@ -333,23 +334,38 @@ export function routeUserRequest(
   const transIndicators = ['បកប្រែ', 'translate', 'meaning of', 'ខ្មែរទៅអង់គ្លេស', 'អង់គ្លេសទៅខ្មែរ'];
   const isTranslation = transIndicators.some(kw => lower.includes(kw));
 
-  // 8. Intelligent Web Search Decision — ChatGPT-style automatic routing
-  // Search is triggered when:
-  //   a) User explicitly asks to search ("search", "look up", "google", etc.)
-  //   b) Question contains time-sensitive keywords (today, latest, current, news, etc.)
-  //   c) Question asks about prices, weather, scores, events, releases
-  //   d) User has webSearchEnabled toggle on
-  // Search is NOT triggered for:
-  //   a) Simple greetings, math, coding, translation
-  //   b) General knowledge questions ("what is photosynthesis")
-  //   c) Creative writing, opinions, explanations
+  // 7.5 File Generation Intent
+  const fileIntent = detectFileIntent(trimmed);
+  if (fileIntent.isFileRequest) {
+    return {
+      intent: 'file_gen',
+      isImageGeneration: false,
+      isVisualExplanation: false,
+      isMathOrReasoning: false,
+      isCoding: false,
+      isWebSearch: false,
+      language: lang,
+      systemDirective: `Generate a ${fileIntent.fileType?.toUpperCase()} file based on the user request. Produce the actual file content.`,
+    };
+  }
 
+  // 8. Intelligent Web Search Decision — ChatGPT-style automatic routing
+  // ──────────────────────────────────────────────────────────────────
+  // AUTO-SEARCH: Any query that likely needs real-time/external data
+  // NO SEARCH: Greetings, math, coding, translation, creative writing
+  // ──────────────────────────────────────────────────────────────────
+
+  // A. Explicit search actions
   const explicitSearchTriggers = [
     'search', 'search web', 'search google', 'look up', 'find online', 'check online',
     'google', 'browse', 'browse the web', 'search for', 'find out',
     'ស្វែងរក', 'ស្រាវជ្រាវ', 'លើ google', 'តាម web', 'ស្វែងរកតាម', 'រកមើល',
+    'ដឹងដែរ', 'ដឹង', 'ចង់ដឹង', 'ឱ្យដឹង', 'ដឹងអី', 'ដឹងទេ',
+    'link', 'url', 'website', 'ទំព័រ', 'គេហទំព័រ', 'វិបសាយ',
+    'youtube', 'facebook', 'tiktok', 'instagram', 'twitter', 'twitter/x',
   ];
 
+  // B. Time-sensitive (need current data)
   const timeSensitiveKeywords = [
     'news', 'latest', 'today', 'yesterday', 'current', 'recent', 'newest', 'just',
     'breaking', 'live', 'real-time', 'realtime', 'now', 'currently',
@@ -357,26 +373,87 @@ export function routeUserRequest(
     'upcoming', 'tomorrow', 'next week', 'next month',
     'who won', 'who is the', 'what happened', 'release date', 'what\'s new',
     '2024', '2025', '2026', '2027',
+    'trailer', 'release', 'launch', 'announced', 'update', 'patch', 'version',
+    'score', 'result', 'winner', 'champion',
     'ថ្ងៃនេះ', 'ម្សិលមិញ', 'សប្តាហ៍នេះ', 'ខែនេះ', 'ឆ្នាំនេះ', 'ឆ្នាំ២០២៦', 'ឆ្នាំ២០២៥',
-    'ថ្មីៗ', 'កំពុង', 'ឥឡូវ', 'ថ្ងៃស្អែក', 'សប្តាហ៍ក្រោយ', 'ពេលនេះ',
+    'ថ្មីៗ', 'កំពុង', 'ឥឡូវ', 'ថ្ងៃស្អែក', 'សប្តាហ៍ក្រោយ', 'ពេលនេះ', 'ពេលថ្មីៗ',
   ];
 
+  // C. Factual lookup (prices, weather, etc.)
   const factualLookupKeywords = [
-    'price', 'weather', 'stock', 'score', 'exchange rate', 'gold price', 'bitcoin',
+    'price', 'weather', 'stock', 'exchange rate', 'gold price', 'bitcoin',
     'crypto', 'btc', 'ethereum', 'market', 'forecast', 'prediction', 'rate',
     'population', 'gdp', 'inflation', 'unemployment', 'election', 'vote',
-    'ournament', 'championship', 'league', 'world cup', 'olympics',
+    'championship', 'league', 'world cup', 'olympics',
     'flight', 'visa', 'passport', 'embassy', 'currency',
+    'flight', 'price', 'cost', 'buy', 'sell', 'download', 'app',
     'តម្លៃ', 'អាកាសធាតុ', 'ផ្សារហ៊ុន', 'អត្រាប្តូរប្រាក់', 'តម្លៃមាស',
-    'ពិន្ទុបាល់ទាត់', 'លទ្ធផល', 'កាលវិភាគ', 'តើអ្នកណាជា', 'តើនរណាជា',
+    'ពិន្ទុបាល់ទាត់', 'លទ្ធផល', 'កាលវិភាគ', 'ទាញយក', 'ទិញ', 'លក់',
+  ];
+
+  // D. Person/Entity lookup (who is X, what is X)
+  const entityLookupTriggers = [
+    'who is', 'who are', 'who was', 'who were',
+    'what is', 'what are', 'what was',
+    'when is', 'when did', 'when will', 'when was',
+    'where is', 'where did', 'where was',
+    'how many', 'how much', 'how old', 'how tall',
+    'which is', 'which one',
+    'តើអ្នកណា', 'តើនរណា', 'តើអ្វី', 'តើពេលណា', 'តើនៅឯណា', 'តើប៉ុន្មាន',
+    'តើអ្នកណាជា', 'តើនរណាជា', 'តើអ្វីជា',
+  ];
+
+  // E. Content/media lookup (movie, game, music, etc.)
+  const contentLookupKeywords = [
+    'movie', 'film', 'series', 'season', 'episode', 'trailer', 'song', 'album',
+    'game', 'gta', 'playstation', 'xbox', 'nintendo', 'console', 'pc',
+    'book', 'author', 'director', 'actor', 'actress', 'singer',
+    'រឿង', 'ភាពយន្ត', 'បទចម្រៀង', 'អាល់ប៊ុម', 'សៀវភៅ', 'អ្នកនិពន្ធ',
+    'តន្ត្រី', 'កីឡា', 'បាល់ទាត់', 'បាល់ឱប', 'MMA', 'UFC', 'boxing',
+  ];
+
+  // F. Product/app/service lookup
+  const productLookupKeywords = [
+    'download', 'install', 'app', 'software', 'tool', 'website',
+    'service', 'platform', 'alternative', 'vs', 'compare', 'review',
+    'ទាញយក', 'ដំឡើង', 'កម្មវិធី', 'វិបសាយ', 'សេវាកម្ម',
+  ];
+
+  // G. News/current events
+  const newsKeywords = [
+    'cambodia', 'khmer', 'ភ្នំពេញ', 'សៀមរាប', 'កម្ពុជា',
+    'world', 'international', 'global', ' asia', 'africa', 'europe',
+    'politics', 'government', 'minister', 'king', 'queen', '-president',
+    'ប្រទេស', 'រដ្ឋាភិបាល', 'នាយករដ្ឋមន្ត្រី', 'ព្រះមហាក្សត្រ',
   ];
 
   const hasExplicitSearch = explicitSearchTriggers.some(kw => lower.includes(kw));
   const hasTimeSensitive = timeSensitiveKeywords.some(kw => lower.includes(kw));
   const hasFactualLookup = factualLookupKeywords.some(kw => lower.includes(kw));
+  const hasEntityLookup = entityLookupTriggers.some(kw => lower.includes(kw));
+  const hasContentLookup = contentLookupKeywords.some(kw => lower.includes(kw));
+  const hasProductLookup = productLookupKeywords.some(kw => lower.includes(kw));
+  const hasNewsKeywords = newsKeywords.some(kw => lower.includes(kw));
 
-  // Determine if search should be triggered
-  const wantsSearch = webSearchEnabled || hasExplicitSearch || hasTimeSensitive || hasFactualLookup;
+  // H. Question word detection (who/what/when/where/how)
+  const hasQuestionWord = /\b(who|what|when|where|how|which|whose)\b/i.test(lower) ||
+    /តើ\s*(អ្នកណា|នរណា|អ្វី|ពេលណា|នៅឯណា|ប៉ុន្មាន|យ៉ាងម៉េច)/i.test(lower);
+
+  // I. Check if it's a "tell me about" / "describe" pattern
+  const isTellMeAbout = /\b(tell me about|describe|info about|tell me who|tell me what|tell me when|tell me where)\b/i.test(lower) ||
+    /ប្រាប់ខ្ញុំពី|ពិពណ៌នាអំពី|នាំចូល/i.test(lower);
+
+  // FINAL DECISION: Search if ANY trigger matches
+  const wantsSearch = webSearchEnabled || 
+    hasExplicitSearch || 
+    hasTimeSensitive || 
+    hasFactualLookup || 
+    hasEntityLookup ||
+    hasContentLookup ||
+    hasProductLookup ||
+    hasNewsKeywords ||
+    isTellMeAbout ||
+    (hasQuestionWord && !isMath && !isCoding && !isTranslation);
 
   let determinedIntent: IntentCategory = 'text';
   if (isMath) determinedIntent = 'math';

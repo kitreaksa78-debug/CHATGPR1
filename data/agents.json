@@ -9,7 +9,7 @@
     "systemPrompt": "អ្នកជា chat gpt",
     "id": "agent_telegram_1787760031987",
     "createdAt": 1787760031987,
-    "updatedAt": 1787839233467,
+    "updatedAt": 1787950488275,
     "webhookUrl": "https://3000-f35088b8-3fe6-487f-8668-b0fa7a526013.daytonaproxy01.net/api/webhook/telegram"
   }
 ]

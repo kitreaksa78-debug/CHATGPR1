@@ -1121,36 +1121,6 @@
     "messages": [
       {
         "role": "user",
-        "content": "សួស្តី",
-        "timestamp": 1787760057968
-      },
-      {
-        "role": "assistant",
-        "content": "សួស្តី! តើខ្ញុំអាចជួយអ្វីអ្នកបានថ្ងៃនេះ?",
-        "timestamp": 1787760059311
-      },
-      {
-        "role": "user",
-        "content": "តម្លៃមាសថ្ងៃនេះ link",
-        "timestamp": 1787760064641
-      },
-      {
-        "role": "assistant",
-        "content": "ជាអកុសល ខ្ញុំមិនមានលទ្ធភាពចូលរួម (access) ទៅកាន់អ៊ីនធឺណិតផ្ទាល់ ដើម្បីទាញយកតារាងតម្លៃមាស ឬតំណភ្ជាប់ (link) ថ្មីៗប្រចាំថ្ងៃក្នុងពេលជាក់ស្តែង (real-time) បានទេ។ \n\nទោះជាយ៉ាងណា ដើម្បីពិនិត្យតម្លៃមាសថ្ងៃនេះ អ្នកអាចចូលទៅកាន់៖\n1. **ទំព័រហ្វេសប៊ុករបស់ហាងលក់មាសធំៗនៅកម្ពុជា** (ដូចជា ហាងលក់មាស ឱភាស, ហាងលក់មាស ឡាយ ប៊ុនហេង ជាដើម)។\n2. **វេទិកាព័ត៌មានហិរញ្ញវត្ថុអន្តរជាតិ** (ប្រសិនបើអ្នកចង់ដឹងពីតម្លៃមាសពិភពលោក ដូចជា Kitco, GoldPrice.org ឬ Investing.com)។\n\nតើអ្នកចង់ឱ្យខ្ញុំជួយពន្យល់ពីកត្តាដែលកំណត់តម្លៃមាស ឬរឿងផ្សេងទៀតទេ?",
-        "timestamp": 1787760066954
-      },
-      {
-        "role": "user",
-        "content": "Rocket link websites",
-        "timestamp": 1787760117242
-      },
-      {
-        "role": "assistant",
-        "content": "Since I don't have direct access to live internet browsing to provide real-time clickable links, I can tell you about the official **Rocket (Wing Bank)** digital services in Cambodia and how to access them:\n\n1. **Wing Bank (Cambodia) Plc. (The company behind Wing/Rocket money transfers):**\n   * **Official Website:** You can easily find it by searching for \"Wing Bank Cambodia\" on Google. Their main portal is typically used for digital banking, loans, and money transfers.\n   * **App Store / Google Play:** If you are looking to download the mobile application, search for **\"Wing Bank\"** or **\"Wing Money\"** in the Apple App Store or Google Play Store.\n\n2. **If you are referring to Rocket Money (US-based financial app):**\n   * **Official Website:** Search for \"Rocket Money\" on your browser to access their official budgeting and subscription-management platform.\n\nIf you need help with specific instructions on how to use financial apps or digital transfers in Cambodia, feel free to ask!",
-        "timestamp": 1787760120082
-      },
-      {
-        "role": "user",
         "content": "Rocket",
         "timestamp": 1787760140832
       },
@@ -1358,9 +1328,49 @@
         "role": "assistant",
         "content": "I'm experiencing high demand right now. Please try again in a moment.",
         "timestamp": 1787839249982
+      },
+      {
+        "role": "user",
+        "content": "សួស្តី",
+        "timestamp": 1787950506352
+      },
+      {
+        "role": "assistant",
+        "content": "សួស្តី! 😊 តើថ្ងៃនេះមានអ្វីឱ្យខ្ញុំជួយ ឬចង់សាកសួររឿងអ្វីដែរ?",
+        "timestamp": 1787950507560
+      },
+      {
+        "role": "user",
+        "content": "តម្លៃមាស",
+        "timestamp": 1787950512456
+      },
+      {
+        "role": "assistant",
+        "content": "យោងតាមទិន្នន័យទីផ្សារអន្តរជាតិ និងការវិភាគនាពេលថ្មីៗនេះ តម្លៃមាសនៅលើទីផ្សារពិភពលោកស្ថិតក្នុងកម្រិតខ្ពស់មួយ ដោយសារតែភាពតានតឹងភូមិសាស្ត្រនយោបាយ និងកត្តាសេដ្ឋកិច្ចផ្សេងៗ៖\n\n* **តម្លៃមាសក្នុងមួយអោន (Ounce):** មានតម្លៃប្រហែល **៤,៥៩៣.៦៧ ដុល្លារអាមេរិក** (ឬប្រែប្រួលជុំវិញតំបន់ ៤,០០០ ដល់ ៤,៦00 ដុល្លារអាមេរិក អាស្រ័យលើប្រភពនិងពេលវេលាជាក់ស្តែង) [1], [2]។\n* **តម្លៃមាសក្នុងមួយក្រាម (Gram):** ប្រហែល **១៤៧.៦៩ ដុល្លារអាមេរិក** [2]។\n* **ការព្យាករសម្រាប់ឆ្នាំ២០២៦៖** ធនាគារស្វីស UBS ធ្លាប់បានព្យាករថា ហាងឆេងមាសអាចនឹងមានការឡើងថ្លៃបន្តទៀត ដោយសារតែភាពច្របូលច្របល់នៃស្ថានភាពសេដ្ឋកិច្ច និងនយោបាយពិភពលោក [3]។\n\n*បញ្ជាក់៖ តម្លៃនេះគឺជាតម្លៃអន្តរជាតិ (Global Spot Price) ចំណែកឯតម្លៃលក់តាមហាងមាសក្នុងស្រុកនៅកម្ពុជាអាចមានការប្រែប្រួលបន្តិចបន្តួចទៅតាមប្រភេទមាស (មាស ១០វ៉ាត់, មាស ផ្លាទីន, ឬមាសគីឡូ) និងការកំណត់របស់ហាងនីមួយៗ។*\n\n**ប្រភពព័ត៌មាន (Sources):**\n* [GoldPrice.org](https://goldprice.org) [1]\n* [Veracash Gold Price](https://www.veracash.com/gold-price-and-chart) [2]\n* [Business Cambodia](https://business-cambodia.com/articles/the-gorld-trend-in-2026) [3]",
+        "timestamp": 1787950516752
+      },
+      {
+        "role": "user",
+        "content": "Gta vi trailer 2 link",
+        "timestamp": 1787950568062
+      },
+      {
+        "role": "assistant",
+        "content": "រហូតមកដល់ពេលនេះ (ខែមីនា ឆ្នាំ ២០២៦) **Rockstar Games មិនទាន់បានចេញផ្សាយ Trailer ផ្លូវការទី ២ (Trailer 2) របស់ហ្គេម GTA VI នៅឡើយទេ**។ \n\nពួកគេទើបតែចេញផ្សាយ Trailer ផ្លូវការទី ១ មួយប៉ុណ្ណោះកាលពីខែធ្នូ ឆ្នាំ ២០២៣។ ដូច្នេះហើយ មិនទាន់មាន ლიንក (Link) ផ្លូវការសម្រាប់ Trailer ទី ២ ទេ។ \n\nប្រសិនបើអ្នកឃើញវីដេអូណាមួយនៅលើ YouTube ឬបណ្តាញសង្គមផ្សេងទៀតដែលដាក់ចំណងជើងថា \"GTA VI Trailer 2 Official\" ភាគច្រើនគឺជាវីដេអូកាត់ត (Fan-made) ឬវីដេអូក្លែងក្លាយ ដើម្បីទាក់ទាញការទស្សនា (Clickbait) តែប៉ុណ្ណោះ។\n\nអ្នកអាចតាមដានព័ត៌មាន និង Trailer ផ្លូវការថ្មីៗពី Rockstar Games ដោយផ្ទាល់នៅលើ៖\n* **YouTube Channel ផ្លូវការរបស់ Rockstar Games:** [youtube.com/@rockstargames](https://www.youtube.com/@rockstargames)\n* **គេហទំព័រផ្លូវការ:** [rockstargames.com/gta-vi](https://www.rockstargames.com/gta-vi)\n\nប្រសិនបើ Trailer ទី ២ ចេញជាផ្លូវការ ខ្ញុំនឹងជួយ update ព័ត៌មានជូនអ្នកភ្លាម!",
+        "timestamp": 1787950570339
+      },
+      {
+        "role": "user",
+        "content": "ស្វែងរក gta vi trailer 2",
+        "timestamp": 1787950594363
+      },
+      {
+        "role": "assistant",
+        "content": "ដូចដែលខ្ញុំបានជម្រាបជូនខាងលើដែរ រហូតមកទល់ពេលនេះ ក្រុមហ៊ុន **Rockstar Games មិនទាន់បានចេញផ្សាយ Trailer ផ្លូវការទី ២ (Trailer 2) របស់ហ្គេម GTA VI នៅឡើយទេ។**\n\nប្រសិនបើអ្នកចង់ពិនិត្យមើលដោយផ្ទាល់ ឬចង់រង់ចាំមើលថាតើមានការចេញផ្សាយ Trailer ថ្មីឬនៅ អ្នកអាចចូលទៅកាន់តំណភ្ជាប់ (Links) ផ្លូវការខាងក្រោមនេះបាន៖\n\n1. **ឆានែល YouTube ផ្លូវការរបស់ Rockstar Games:** \n   👉 [ចូលទៅកាន់ YouTube របស់ Rockstar Games](https://www.youtube.com/@rockstargames) (រាល់ Trailer ផ្លូវការទាំងអស់នឹងត្រូវបង្ហោះទីនេះមុនគេ)។\n2. **គេហទំព័រផ្លូវការរបស់ GTA VI:** \n   👉 [ចូលទៅកាន់ Rockstar Games GTA VI Website](https://www.rockstargames.com/gta-vi)\n\n*សូមប្រុងប្រយ័ត្នចំពោះវីដេអូ ឬតំណភ្ជាប់ផ្សេងៗនៅលើ YouTube ឬ TikTok ដែលអះអាងថាជា \"GTA VI Trailer 2\" ព្រោះភាគច្រើនជាវីដេអូកាត់តរបស់ហ្វេនៗ (Fan-made) ឬជាវីដេអូក្លែងក្លាយ (Fake) ដើម្បីបន្លំភ្នែកតែប៉ុណ្ណោះ។*",
+        "timestamp": 1787950596477
       }
     ],
     "createdAt": 1787760057965,
-    "updatedAt": 1787839249982
+    "updatedAt": 1787950596477
   }
 ]

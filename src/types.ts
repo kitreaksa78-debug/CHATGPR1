@@ -8,7 +8,8 @@ export type IntentCategory =
   | 'document'
   | 'coding'
   | 'search'
-  | 'translation';
+  | 'translation'
+  | 'file_gen';
 
 export type VisualType = 
   | 'diagram'
@@ -67,6 +68,18 @@ export interface GeneratedImage {
   createdAt: number;
 }
 
+export interface GeneratedFile {
+  id: string;
+  filename: string;
+  mimeType: string;
+  downloadUrl: string;
+  fileSize: number;
+  type: string;
+  status: "generating" | "ready" | "error";
+  error?: string;
+  createdAt: number;
+}
+
 export interface Message {
   id: string;
   role: Role;
@@ -75,6 +88,7 @@ export interface Message {
   intent?: IntentCategory;
   attachments?: Attachment[];
   generatedImage?: GeneratedImage;
+  generatedFile?: GeneratedFile;
   visualExplanation?: VisualExplanation;
   groundingSources?: GroundingSource[];
   isStreaming?: boolean;

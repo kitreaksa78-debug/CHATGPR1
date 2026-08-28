@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import crypto from "crypto";
@@ -18,8 +19,8 @@ import { processTelegramMessage, setupTelegramWebhook, getTelegramBotInfo, sendT
 import { generateVisualExplanation } from "./src/services/visualExplanation.js";
 import { parseGeminiError } from "./src/services/errorHelper.js";
 import { generateResilientResponse } from "./src/services/fallbackResponder.js";
-import { streamQ8Fallback, testQ8Health } from "./src/services/q8Fallback.js";
 import { routeAndStream } from "./src/services/aiRouter.js";
+import { generateFile, detectFileIntent, type FileType } from "./src/services/fileGenerator.js";
 
 dotenv.config();
 dotenv.config({ path: ".env.local" });
@@ -160,6 +161,96 @@ app.post("/api/auth/logout", (req, res) => {
   res.json({ success: true });
 });
 
+// ─────────────────────────────────────────────
+// Facebook OAuth for Agent Setup
+// ─────────────────────────────────────────────
+
+const FACEBOOK_APP_ID = process.env.FACEBOOK_APP_ID;
+const FACEBOOK_APP_SECRET = process.env.FACEBOOK_APP_SECRET;
+
+// Facebook OAuth: Redirect to Facebook consent screen
+app.get("/api/auth/facebook", (req, res) => {
+  if (!FACEBOOK_APP_ID) {
+    return res.status(400).json({ error: "FACEBOOK_APP_ID not configured" });
+  }
+  const baseUrl = getBaseUrl(req);
+  const redirectUri = `${baseUrl}/api/auth/facebook/callback`;
+  const state = crypto.randomBytes(16).toString("hex");
+
+  const params = new URLSearchParams({
+    client_id: FACEBOOK_APP_ID,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: "pages_messaging,pages_manage_metadata,pages_show_list",
+    state,
+  });
+
+  res.redirect(`https://www.facebook.com/v19.0/dialog/oauth?${params.toString()}`);
+});
+
+// Facebook OAuth: Handle callback → exchange token → get pages
+app.get("/api/auth/facebook/callback", async (req, res) => {
+  const { code, error } = req.query;
+  if (error || !code) {
+    return res.redirect(`/#/chat?fb_error=${error || "no_code"}`);
+  }
+
+  try {
+    const baseUrl = getBaseUrl(req);
+    const redirectUri = `${baseUrl}/api/auth/facebook/callback`;
+
+    // Exchange code for user access token
+    const tokenRes = await fetch(
+      `https://graph.facebook.com/v19.0/oauth/access_token?client_id=${FACEBOOK_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${FACEBOOK_APP_SECRET}&code=${code}`
+    );
+    const tokenData = await tokenRes.json();
+    if (tokenData.error) {
+      console.error("[FB OAuth] Token exchange error:", tokenData.error);
+      return res.redirect(`/#/chat?fb_error=token_exchange_failed`);
+    }
+
+    const userToken = tokenData.access_token;
+
+    // Get user's pages
+    const pagesRes = await fetch(
+      `https://graph.facebook.com/v19.0/me/accounts?access_token=${userToken}`
+    );
+    const pagesData = await pagesRes.json();
+    const pages = pagesData.data || [];
+
+    // Store in session-like state via query params (stateless approach)
+    const fbData = encodeURIComponent(JSON.stringify({
+      userToken,
+      pages: pages.map((p: any) => ({ id: p.id, name: p.name, access_token: p.access_token })),
+    }));
+
+    res.redirect(`/#/chat?fb_pages=${fbData}`);
+  } catch (err) {
+    console.error("[FB OAuth] Callback error:", err);
+    return res.redirect(`/#/chat?fb_error=callback_failed`);
+  }
+});
+
+// Facebook: Get pages for a user token (called from frontend)
+app.post("/api/auth/facebook/pages", async (req, res) => {
+  const { userToken } = req.body;
+  if (!userToken) {
+    return res.status(400).json({ error: "userToken required" });
+  }
+  try {
+    const pagesRes = await fetch(
+      `https://graph.facebook.com/v19.0/me/accounts?access_token=${userToken}`
+    );
+    const pagesData = await pagesRes.json();
+    if (pagesData.error) {
+      return res.status(400).json({ error: pagesData.error.message });
+    }
+    res.json({ pages: pagesData.data || [] });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch pages" });
+  }
+});
+
 // 1. Streaming Chat & Multimodal Routing Endpoint
 app.post("/api/chat/stream", async (req, res) => {
   const { 
@@ -213,6 +304,74 @@ app.post("/api/chat/stream", async (req, res) => {
     res.write(`data: ${JSON.stringify({ type: "search_status", status: "verifying", message: verifyingMsg })}\n\n`);
   }
 
+  // Handle File Generation requests
+  if (route.intent === "file_gen") {
+    try {
+      res.write(`data: ${JSON.stringify({ type: "file_gen_start" })}\n\n`);
+
+      // Use AI to generate the file content first
+      const ai = getGeminiClient();
+      const fileIntent = detectFileIntent(prompt);
+      const fileType = fileIntent.fileType || "pdf";
+      const filename = fileIntent.filename || `document.${fileType}`;
+
+      const contentPrompt = `Generate the content for a ${fileType.toUpperCase()} file based on this request: ${prompt}
+
+Return ONLY the raw content without any markdown code fences or explanations. For PDF/DOCX/PPTX, use markdown format with headings, paragraphs, lists, and tables.
+For CSV/XLSX, use comma-separated values with headers.
+For JSON, return valid JSON.
+For TXT/MD, return plain text or markdown.`;
+
+      const result = await ai.models.generateContent({
+        model: settings.model || "gemini-2.5-flash",
+        contents: contentPrompt,
+      });
+      const fileContent = result.text || "";
+
+      if (!fileContent) {
+        res.write(`data: ${JSON.stringify({ type: "file_gen_error", error: "Could not generate file content" })}\n\n`);
+      } else {
+        // Generate the actual file
+        const fileResult = await generateFile({
+          type: fileType,
+          filename,
+          content: fileContent,
+        });
+
+        if (fileResult.success) {
+          res.write(`data: ${JSON.stringify({
+            type: "file_gen_success",
+            file: {
+              id: "file_" + Date.now(),
+              filename: fileResult.filename,
+              mimeType: fileResult.mimeType,
+              downloadUrl: fileResult.downloadUrl,
+              fileSize: fileResult.fileSize,
+              type: fileType,
+              status: "ready",
+              createdAt: Date.now(),
+            },
+          })}\n\n`);
+        } else {
+          res.write(`data: ${JSON.stringify({
+            type: "file_gen_error",
+            error: fileResult.error || "File generation failed",
+          })}\n\n`);
+        }
+      }
+
+      // Send a brief text response
+      const replyText = `\u2705 File \`${filename}\` has been generated successfully. You can download it above.`;
+      res.write(`data: ${JSON.stringify({ type: "token", text: replyText })}\n\n`);
+    } catch (err: any) {
+      console.error("[FileGen] Stream error:", err);
+      res.write(`data: ${JSON.stringify({ type: "file_gen_error", error: parseGeminiError(err) })}\n\n`);
+    } finally {
+      res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+      return res.end();
+    }
+  }
+
   // Handle Pure Artistic Image Generation or Conversational Image Editing
   if (route.isImageGeneration) {
     try {
@@ -262,14 +421,7 @@ app.post("/api/chat/stream", async (req, res) => {
           isEdited: imageResult.isEdited,
         })}\n\n`);
 
-        const isKhmer = route.language === "km";
-        const replyText = isKhmer 
-          ? (imageResult.isEdited 
-              ? "បាន! ខ្ញុំបានកែប្រែ និងបង្កើតរូបភាពកម្រិត 2K/4K តាមសំណើរបស់អ្នករួចរាល់ហើយ។"
-              : "បាន! ខ្ញុំបានបង្កើតរូបភាពកម្រិត 2K/4K តាមរយៈ Gemini 3.1 Flash Image រួចរាល់ហើយ។")
-          : (imageResult.isEdited
-              ? "I have edited and rendered your image in high-resolution."
-              : "Here is your high-resolution photorealistic image generated with Gemini 3.1 Flash Image (Nano Banana 2).");
+        const replyText = "";
         res.write(`data: ${JSON.stringify({ type: "token", text: replyText })}\n\n`);
       } else {
         res.write(`data: ${JSON.stringify({
@@ -387,11 +539,13 @@ Your mission is to deliver deeply insightful, exceptionally helpful, beautifully
 
     // Perform web search if search intent is active
     let searchContext = "";
+    let searchResultSources: any[] = [];
     if (route.isWebSearch) {
       try {
         console.log(`[WebSearch] Searching for: ${prompt.slice(0, 50)}`);
-        const searchResults = await searchWeb(prompt, 5);
+        const searchResults = await searchWeb(prompt, 3);
         searchContext = formatSearchResults(searchResults);
+        searchResultSources = searchResults.map(r => ({ title: r.title, uri: r.url }));
         console.log(`[WebSearch] Found ${searchResults.length} results, context length: ${searchContext.length}`);
       } catch (searchErr) {
         console.warn("[WebSearch] Error:", searchErr);
@@ -423,7 +577,7 @@ Your mission is to deliver deeply insightful, exceptionally helpful, beautifully
     // AI ROUTER: Multi-provider cascade with circuit breaker
     // Gemini (6 models) → Pollinations.ai (free) → Q8_K_XL → Knowledge Engine
     // ═══════════════════════════════════════════════════════════════
-    let groundingSources: any[] = [];
+    let groundingSources: any[] = searchResultSources.length > 0 ? searchResultSources : [];
     let fullText = "";
 
     const routerResult = await routeAndStream({
@@ -557,32 +711,6 @@ Rules:
   } catch (err) {
     // Graceful fallback without crashing or throwing
     return res.json({ title: cleanPrompt || "Conversation" });
-  }
-});
-
-// 5. Fallback AI Health Check Endpoint
-app.post("/api/fallback/test", async (req, res) => {
-  const { 
-    endpointUrl = "https://hadadrjt-api.hf.space/v1", 
-    modelName = "Q8_K_XL" 
-  } = req.body;
-
-  try {
-    const result = await testQ8Health(endpointUrl, modelName);
-    return res.json({ success: true, ...result });
-  } catch (err: any) {
-    return res.json({
-      success: false,
-      status: "ERROR",
-      httpStatus: 0,
-      contentType: "none",
-      responseTimeMs: 0,
-      model: modelName,
-      endpoint: endpointUrl,
-      message: "Health check encountered an unexpected error",
-      error: err?.message || "Unknown error",
-      isReady: false,
-    });
   }
 });
 
@@ -1061,6 +1189,92 @@ app.post("/api/agents/telegram/verify-token", async (req, res) => {
     res.json({ valid: true, bot: botInfo });
   } else {
     res.json({ valid: false, error: "Invalid bot token" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// AI File Generation Endpoints
+// ─────────────────────────────────────────────
+
+// POST /api/generate-file — Generate a file based on type, filename, content
+app.post("/api/generate-file", async (req, res) => {
+  try {
+    const { type, filename, content, metadata } = req.body;
+
+    if (!type || !content) {
+      return res.status(400).json({ error: "type and content are required" });
+    }
+
+    const validTypes: FileType[] = ["pdf", "docx", "xlsx", "pptx", "csv", "txt", "md", "json", "zip"];
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({ error: `Invalid file type. Supported: ${validTypes.join(", ")}` });
+    }
+
+    const result = await generateFile({
+      type,
+      filename: filename || `document.${type}`,
+      content,
+      metadata,
+    });
+
+    if (result.success) {
+      res.json({
+        success: true,
+        filename: result.filename,
+        mimeType: result.mimeType,
+        downloadUrl: result.downloadUrl,
+        fileSize: result.fileSize,
+      });
+    } else {
+      res.status(500).json({ error: result.error || "File generation failed" });
+    }
+  } catch (err: any) {
+    console.error("[FileGen] API error:", err);
+    res.status(500).json({ error: err.message || "File generation failed" });
+  }
+});
+
+// GET /api/files/download/:filename — Download a generated file
+app.get("/api/files/download/:filename", (req, res) => {
+  try {
+    const filename = req.params.filename;
+    // Prevent path traversal
+    const safeName = path.basename(filename).replace(/\.\./g, "");
+    if (!safeName || safeName !== filename) {
+      return res.status(400).json({ error: "Invalid filename" });
+    }
+
+    const filePath = path.join(process.cwd(), "temp", "files", safeName);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File not found. It may have expired." });
+    }
+
+    // Determine MIME type from extension
+    const ext = path.extname(safeName).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      ".pdf": "application/pdf",
+      ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      ".csv": "text/csv",
+      ".txt": "text/plain",
+      ".md": "text/markdown",
+      ".json": "application/json",
+      ".zip": "application/zip",
+    };
+
+    const mimeType = mimeMap[ext] || "application/octet-stream";
+    const baseName = safeName.replace(/_[a-f0-9]{16}/, ""); // Remove unique ID for display
+
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Content-Disposition", `attachment; filename="${baseName}"`);
+
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+  } catch (err: any) {
+    console.error("[FileGen] Download error:", err);
+    res.status(500).json({ error: "Download failed" });
   }
 });
 

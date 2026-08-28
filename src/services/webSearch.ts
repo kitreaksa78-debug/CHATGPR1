@@ -1,10 +1,9 @@
 /**
- * Web Search Service — Google Programmable Search Engine
+ * Web Search Service — No extra API key needed!
  *
- * Single Provider: Google Custom Search API
- * - High quality, reliable results
- * - Free tier: 100 queries/day
- * - Paid: $5 per 1000 queries
+ * Primary: Gemini Grounding (uses existing GEMINI_API_KEY)
+ * Fallback 1: SearXNG instances (free, open-source)
+ * Fallback 2: DuckDuckGo Lite (free, no key)
  *
  * Features:
  * - Intelligent query rewriting (Khmer → English)
@@ -89,13 +88,71 @@ export function generateSearchQueries(question: string): string[] {
   const translated = translateToEnglish(topic);
   const isTimeSensitive = hasTimeSensitiveKeywords(question);
   const year = new Date().getFullYear();
+  const lower = question.toLowerCase();
 
-  queries.push(translated);
+  // 1. Primary query: translated topic
+  if (translated.length > 2) {
+    queries.push(translated);
+  }
 
-  if (isTimeSensitive || hasKhmer(question)) {
+  // 2. If Khmer, also add the original + year
+  if (hasKhmer(question)) {
+    const cleanKhmer = question.replace(/[?។!]+$/, "").trim();
+    if (cleanKhmer.length > 2) {
+      queries.push(`${cleanKhmer} ${year}`);
+    }
+    // Also try just the key English words from the Khmer text
+    const englishWords = translated.replace(/[^a-zA-Z0-9\s]/g, "").trim();
+    if (englishWords.length > 3 && !queries.includes(englishWords)) {
+      queries.push(englishWords);
+    }
+  }
+
+  // 3. Time-sensitive: add year
+  if (isTimeSensitive) {
     queries.push(`${translated} ${year}`);
   }
 
+  // 4. Person/entity queries: add context
+  if (/\b(who is|who are|who was|តើអ្នកណាជា|តើនរណាជា)\b/i.test(lower)) {
+    // "Who is Elon Musk" → search "Elon Musk biography"
+    const person = translated.replace(/^(who is|who are|who was|តើអ្នកណាជា|តើនរណាជា)\s*/i, "").trim();
+    if (person.length > 1) {
+      queries.push(`${person} biography`);
+      queries.push(`${person} ${year}`);
+    }
+  }
+
+  // 5. "What is" queries: add definition context
+  if (/\b(what is|what are|what was|តើអ្វីជា)\b/i.test(lower)) {
+    const subject = translated.replace(/^(what is|what are|what was|តើអ្វីជា)\s*/i, "").trim();
+    if (subject.length > 1) {
+      queries.push(`${subject} explained`);
+      queries.push(`${subject} overview`);
+    }
+  }
+
+  // 6. Price/cost queries: add "price" context
+  if (/\b(price|cost|how much|តម្លៃ|ប៉ុន្មាន)\b/i.test(lower)) {
+    queries.push(`${translated} current price`);
+  }
+
+  // 7. News queries: add "news" context
+  if (/\b(news|breaking|latest|update|ថ្មីៗ|ព័ត៌មាន)\b/i.test(lower)) {
+    queries.push(`${translated} news today`);
+  }
+
+  // 8. Download/app queries: add "download" context
+  if (/\b(download|install|app|ទាញយក|ដំឡើង)\b/i.test(lower)) {
+    queries.push(`${translated} download official`);
+  }
+
+  // 9. Comparison queries
+  if (/\b(vs|versus|compare|comparison|difference between|ប្រៀបធៀប)\b/i.test(lower)) {
+    queries.push(`${translated} comparison review`);
+  }
+
+  // 10. Original question if it's English and different from translated
   if (!hasKhmer(question)) {
     const cleaned = question.replace(/[?។!]+$/, "").trim();
     if (cleaned !== translated && cleaned.length > 3) {
@@ -103,7 +160,8 @@ export function generateSearchQueries(question: string): string[] {
     }
   }
 
-  return [...new Set(queries.filter((q) => q.length > 2))].slice(0, 3);
+  // Deduplicate, filter short queries, return top 2
+  return [...new Set(queries.filter((q) => q.length > 2))].slice(0, 2);
 }
 
 // ─────────────────────────────────────────────
@@ -164,16 +222,269 @@ function deduplicate(results: SearchResult[]): SearchResult[] {
 }
 
 // ─────────────────────────────────────────────
-// 4. SearXNG (Free, Open-Source Meta Search)
+// 4. GEMINI GROUNDING (Primary — uses existing GEMINI_API_KEY)
+// ─────────────────────────────────────────────
+
+function getGeminiKeys(): string[] {
+  const keys: string[] = [];
+  if (process.env.GEMINI_API_KEY) keys.push(process.env.GEMINI_API_KEY);
+  if (process.env.GEMINI_API_KEY_1) keys.push(process.env.GEMINI_API_KEY_1);
+  if (process.env.GEMINI_API_KEY_2) keys.push(process.env.GEMINI_API_KEY_2);
+  if (process.env.GEMINI_API_KEY_3) keys.push(process.env.GEMINI_API_KEY_3);
+  return keys;
+}
+
+let groundingKeyIndex = 0;
+
+async function searchWithGeminiGrounding(query: string, maxResults: number): Promise<SearchResult[]> {
+  const keys = getGeminiKeys();
+  if (keys.length === 0) {
+    console.warn("[WebSearch] No GEMINI_API_KEY set, skipping Gemini grounding");
+    return [];
+  }
+
+  // Try each key with different models
+  const models = ["gemini-3.5-flash-lite", "gemini-3.6-flash"];
+
+  for (let attempt = 0; attempt < Math.min(keys.length * models.length, 6); attempt++) {
+    const apiKey = keys[groundingKeyIndex % keys.length];
+    groundingKeyIndex++;
+    const model = models[attempt % models.length];
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+    const body = {
+      contents: [{ parts: [{ text: query }] }],
+      tools: [{ googleSearch: {} }],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 2048,
+      },
+    };
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.warn(`[WebSearch] Gemini grounding HTTP ${res.status} (key ${(attempt % keys.length) + 1}/${keys.length}, model ${model}), trying next...`);
+      continue;
+    }
+
+    const data = await res.json();
+    const results: SearchResult[] = [];
+
+    // Extract grounding metadata (search results)
+    const candidate = data.candidates?.[0];
+    const groundingMetadata = candidate?.groundingMetadata;
+
+    if (groundingMetadata?.groundingChunks) {
+      for (const chunk of groundingMetadata.groundingChunks.slice(0, maxResults)) {
+        const web = chunk.web;
+        if (web?.uri) {
+          results.push({
+            title: web.title || "Untitled",
+            snippet: "",
+            url: web.uri,
+            domain: getDomain(web.uri),
+            score: 90, // High score for Gemini-sourced results
+          });
+        }
+      }
+    }
+
+    // Also extract from groundingSupports if available
+    if (groundingMetadata?.groundingSupports) {
+      for (const support of groundingMetadata.groundingSupports.slice(0, maxResults)) {
+        const segment = support.segment;
+        const indices = support.groundingChunkIndices || [];
+        // Add snippet text from the AI response
+        for (const idx of indices) {
+          if (results[idx] && segment?.text) {
+            results[idx].snippet = (results[idx].snippet + " " + segment.text).trim().slice(0, 500);
+          }
+        }
+      }
+    }
+
+    // Also extract the AI response text as context
+    const aiText = candidate?.content?.parts?.[0]?.text || "";
+    if (aiText && results.length > 0) {
+      console.log(`[WebSearch] Gemini grounding returned ${results.length} sources + AI context`);
+    } else {
+      console.log(`[WebSearch] Gemini grounding returned ${results.length} sources`);
+    }
+
+    return results;
+  } catch (err) {
+    console.warn(`[WebSearch] Gemini grounding failed (key ${(attempt % keys.length) + 1}): ${(err as Error).message?.slice(0, 80)}`);
+    // Continue to next key/model
+  }
+  } // end for loop
+  return [];
+}
+
+// ─────────────────────────────────────────────
+// 5. TAVILY SEARCH API (Free tier: 1000 req/month)
+// ─────────────────────────────────────────────
+
+async function searchWithTavily(query: string, maxResults: number): Promise<SearchResult[]> {
+  const tavilyKeys = [
+    process.env.TAVILY_API_KEY,
+    process.env.TAVILY_API_KEY_2,
+    process.env.TAVILY_API_KEY_3,
+    process.env.TAVILY_API_KEY_4,
+  ].filter((k): k is string => !!k);
+
+  if (tavilyKeys.length === 0) {
+    console.warn("[WebSearch] No TAVILY_API_KEY set, skipping Tavily Search");
+    return [];
+  }
+
+  // Start from last used index, try all keys until one works
+  let startIdx = parseInt(process.env.TAVILY_ROTATE_INDEX || "0", 10);
+
+  for (let attempt = 0; attempt < tavilyKeys.length; attempt++) {
+    const idx = (startIdx + attempt) % tavilyKeys.length;
+    const apiKey = tavilyKeys[idx];
+
+    try {
+      const res = await fetch("https://api.tavily.com/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          api_key: apiKey,
+          query,
+          search_depth: "basic",
+          max_results: maxResults,
+          include_answer: false,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      // If 429 (rate limited), try next key
+      if (res.status === 429) {
+        console.warn(`[WebSearch] Tavily key ${idx + 1}/${tavilyKeys.length} rate limited (429), trying next key...`);
+        continue;
+      }
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        console.warn(`[WebSearch] Tavily key ${idx + 1} HTTP ${res.status}: ${errText.slice(0, 200)}`);
+        continue;
+      }
+
+      const data = await res.json();
+      const results: SearchResult[] = [];
+
+      if (data.results && Array.isArray(data.results)) {
+        for (const item of data.results.slice(0, maxResults)) {
+          if (item.title && item.url) {
+            results.push({
+              title: item.title.trim(),
+              snippet: (item.content || "").trim().slice(0, 500),
+              url: item.url,
+              domain: getDomain(item.url),
+              score: Math.round((item.score || 0) * 100),
+            });
+          }
+        }
+      }
+
+      if (results.length > 0) {
+        // Remember this key for next rotation
+        process.env.TAVILY_ROTATE_INDEX = String((idx + 1) % tavilyKeys.length);
+        console.log(`[WebSearch] Tavily key ${idx + 1}/${tavilyKeys.length} returned ${results.length} results for "${query.slice(0, 40)}"`);
+        return results;
+      }
+    } catch (err) {
+      console.warn(`[WebSearch] Tavily key ${idx + 1} failed: ${(err as Error).message?.slice(0, 60)}`);
+    }
+  }
+
+  console.warn("[WebSearch] All Tavily keys exhausted or failed");
+  return [];
+}
+
+// ─────────────────────────────────────────────
+// 6. BRAVE SEARCH API (Free tier: 2000 req/month)
+// ─────────────────────────────────────────────
+
+async function searchWithBrave(query: string, maxResults: number): Promise<SearchResult[]> {
+  const apiKey = process.env.BRAVE_API_KEY;
+  if (!apiKey) {
+    console.warn("[WebSearch] BRAVE_API_KEY not set, skipping Brave Search");
+    return [];
+  }
+
+  try {
+    const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`;
+    const res = await fetch(url, {
+      headers: {
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip",
+        "X-Subscription-Token": apiKey,
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.warn(`[WebSearch] Brave Search HTTP ${res.status}: ${errText.slice(0, 200)}`);
+      return [];
+    }
+
+    const data = await res.json();
+    const results: SearchResult[] = [];
+
+    if (data.web?.results && Array.isArray(data.web.results)) {
+      for (const item of data.web.results.slice(0, maxResults)) {
+        if (item.title && item.url) {
+          results.push({
+            title: item.title.trim(),
+            snippet: (item.description || "").trim().slice(0, 500),
+            url: item.url,
+            domain: getDomain(item.url),
+            publishedDate: item.page_age || undefined,
+            score: 0,
+          });
+        }
+      }
+    }
+
+    console.log(`[WebSearch] Brave Search returned ${results.length} results for "${query.slice(0, 40)}"`);
+    return results;
+  } catch (err) {
+    console.warn(`[WebSearch] Brave Search failed: ${(err as Error).message?.slice(0, 60)}`);
+    return [];
+  }
+}
+
+// ─────────────────────────────────────────────
+// 6. SearXNG (Free, Open-Source Meta Search)
 // ─────────────────────────────────────────────
 
 const SEARXNG_INSTANCES = [
-  "https://search.inetol.net",
-  "https://searx.work",
-  "https://search.ononoki.org",
-  "https://searx.tiekoetter.com",
   "https://search.sapti.me",
   "https://searx.be",
+  "https://search.ononoki.org",
+  "https://searx.work",
+  "https://search.inetol.net",
+  "https://searx.tiekoetter.com",
+  "https://search.bus-hit.me",
+  "https://searxng.site",
+  "https://priv.au",
+  "https://search.projectsegfau.lt",
+  "https://search.mdosch.de",
+  "https://search.hbubli.cc",
+  "https://search.bus-hit.me",
+  "https://s.zhoogle.com",
+  "https://search.neet.works",
 ];
 
 async function searchSearXNG(query: string, maxResults: number): Promise<SearchResult[]> {
@@ -220,108 +531,47 @@ async function searchSearXNG(query: string, maxResults: number): Promise<SearchR
 }
 
 // ─────────────────────────────────────────────
-// 5. GOOGLE CUSTOM SEARCH API (if configured)
-// ─────────────────────────────────────────────
-
-function getGoogleCSEConfig() {
-  return {
-    apiKey: process.env.GOOGLE_API_KEY || "",
-    cseId: process.env.GOOGLE_CSE_ID || "",
-  };
-}
-
-async function searchGoogle(query: string, maxResults: number, startIndex = 1): Promise<SearchResult[]> {
-  const { apiKey: GOOGLE_API_KEY, cseId: GOOGLE_CSE_ID } = getGoogleCSEConfig();
-  if (!GOOGLE_API_KEY || !GOOGLE_CSE_ID) {
-    console.warn("[WebSearch] Google CSE not configured (missing GOOGLE_API_KEY or GOOGLE_CSE_ID)");
-    return [];
-  }
-
-  try {
-    const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_API_KEY}&cx=${GOOGLE_CSE_ID}&q=${encodeURIComponent(query)}&num=${maxResults}&start=${startIndex}&lr=lang_en&safe=off`;
-    
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      },
-      signal: AbortSignal.timeout(8000),
-    });
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      console.warn(`[WebSearch] Google CSE returned HTTP ${res.status}: ${errText.slice(0, 200)}`);
-      return [];
-    }
-
-    const data = await res.json();
-    const results: SearchResult[] = [];
-
-    if (data.items && Array.isArray(data.items)) {
-      for (const item of data.items.slice(0, maxResults)) {
-        if (item.title && item.link) {
-          results.push({
-            title: item.title.trim(),
-            snippet: (item.snippet || "").trim().slice(0, 500),
-            url: item.link,
-            domain: getDomain(item.link),
-            publishedDate: item.pagemap?.metatags?.[0]?.["article:published_time"] || undefined,
-            score: 0,
-          });
-        }
-      }
-    }
-
-    console.log(`[WebSearch] Google CSE returned ${results.length} results for "${query.slice(0, 40)}"`);
-    return results;
-  } catch (err) {
-    console.warn(`[WebSearch] Google CSE failed: ${(err as Error).message?.slice(0, 60)}`);
-    return [];
-  }
-}
-
-// ─────────────────────────────────────────────
 // 6. DUCKDUCKGO FALLBACK (Lite endpoint)
 // ─────────────────────────────────────────────
 
 async function searchDuckDuckGoLite(query: string, maxResults: number): Promise<SearchResult[]> {
   try {
-    // Use DuckDuckGo Lite which returns simpler HTML
-    const res = await fetch("https://lite.duckduckgo.com/lite/", {
+    const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       },
-      body: `q=${encodeURIComponent(query)}`,
       signal: AbortSignal.timeout(10000),
     });
 
     if (!res.ok) {
-      console.warn(`[WebSearch] DuckDuckGo Lite returned HTTP ${res.status}`);
+      console.warn(`[WebSearch] DuckDuckGo returned HTTP ${res.status}`);
       return [];
     }
 
     const html = await res.text();
     const results: SearchResult[] = [];
 
-    // Parse lite.duckduckgo.com HTML - links are in <a> tags with class="result-link"
-    const linkRegex = /<a[^>]+class="result-link"[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/gi;
-    const snippetRegex = /<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
-    
+    const linkRegex = /<a[^>]+class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+    const snippetRegex = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+
     let match;
     const links: { url: string; title: string }[] = [];
     const snippets: string[] = [];
 
     while ((match = linkRegex.exec(html)) !== null) {
-      links.push({ url: match[1].trim(), title: match[2].trim() });
+      links.push({ url: match[1].trim(), title: match[2].replace(/<[^>]*>/g, "").trim() });
     }
 
     while ((match = snippetRegex.exec(html)) !== null) {
-      snippets.push(match[1].trim().replace(/<[^>]*>/g, "").slice(0, 500));
+      snippets.push(match[1].replace(/<[^>]*>/g, "").trim().slice(0, 500));
     }
 
     for (let i = 0; i < Math.min(links.length, maxResults); i++) {
       let url = links[i].url;
+      const uddgMatch = url.match(/uddg=([^&]+)/);
+      if (uddgMatch) url = decodeURIComponent(uddgMatch[1]);
       if (url.startsWith("//")) url = "https:" + url;
       if (!url.startsWith("http")) url = "https://" + url;
 
@@ -334,7 +584,7 @@ async function searchDuckDuckGoLite(query: string, maxResults: number): Promise<
       });
     }
 
-    console.log(`[WebSearch] DuckDuckGo Lite returned ${results.length} results`);
+    console.log(`[WebSearch] DuckDuckGo returned ${results.length} results`);
     return results;
   } catch (err) {
     console.warn(`[WebSearch] DuckDuckGo Lite failed: ${(err as Error).message?.slice(0, 60)}`);
@@ -346,36 +596,51 @@ async function searchDuckDuckGoLite(query: string, maxResults: number): Promise<
 // 7. MAIN SEARCH FUNCTION
 // ─────────────────────────────────────────────
 
-export async function searchWeb(question: string, maxResults = 8): Promise<SearchResult[]> {
+export async function searchWeb(question: string, maxResults = 3): Promise<SearchResult[]> {
   const queries = generateSearchQueries(question);
-  console.log(`[WebSearch] Generated ${queries.length} queries:`, queries.map((q) => q.slice(0, 40)));
+  console.log(`[WebSearch] Generated ${queries.length} queries:`, queries.map((q) => q.slice(0, 50)));
 
   const allResults: SearchResult[] = [];
 
-  // Strategy 1: Try SearXNG (free, no API key needed)
-  console.log("[WebSearch] Trying SearXNG...");
+  // Strategy 1: Gemini Grounding (uses existing GEMINI_API_KEY — no extra key needed!)
+  console.log("[WebSearch] Trying Gemini Grounding...");
   for (const q of queries) {
-    const searxResults = await searchSearXNG(q, 5);
-    allResults.push(...searxResults);
+    const geminiResults = await searchWithGeminiGrounding(q, 2);
+    allResults.push(...geminiResults);
   }
 
-  // Strategy 2: If SearXNG failed, try Google Custom Search API
-  if (allResults.length < 3) {
-    const { apiKey, cseId } = getGoogleCSEConfig();
-    if (apiKey && cseId) {
-      console.log("[WebSearch] Trying Google Custom Search API...");
-      for (const q of queries) {
-        const googleResults = await searchGoogle(q, 5);
-        allResults.push(...googleResults);
-      }
+  // Strategy 2: Tavily Search (free tier: 1000 req/month)
+  if (allResults.length < 2) {
+    console.log("[WebSearch] Trying Tavily Search...");
+    for (const q of queries) {
+      const tavilyResults = await searchWithTavily(q, 2);
+      allResults.push(...tavilyResults);
     }
   }
 
-  // Strategy 3: If still not enough, try DuckDuckGo Lite
-  if (allResults.length < 3) {
+  // Strategy 3: Brave Search API (free tier: 2000 req/month)
+  if (allResults.length < 2) {
+    console.log("[WebSearch] Trying Brave Search...");
+    for (const q of queries) {
+      const braveResults = await searchWithBrave(q, 2);
+      allResults.push(...braveResults);
+    }
+  }
+
+  // Strategy 4: Try SearXNG (free, no API key needed)
+  if (allResults.length < 2) {
+    console.log("[WebSearch] Trying SearXNG...");
+    for (const q of queries) {
+      const searxResults = await searchSearXNG(q, 2);
+      allResults.push(...searxResults);
+    }
+  }
+
+  // Strategy 5: DuckDuckGo Lite
+  if (allResults.length < 2) {
     console.log("[WebSearch] Trying DuckDuckGo Lite fallback...");
     for (const q of queries) {
-      const ddgResults = await searchDuckDuckGoLite(q, 5);
+      const ddgResults = await searchDuckDuckGoLite(q, 2);
       allResults.push(...ddgResults);
     }
   }
